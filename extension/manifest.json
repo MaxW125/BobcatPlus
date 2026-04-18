@@ -1,0 +1,20 @@
+{
+  "manifest_version": 3,
+  "name": "Bobcat Plus",
+  "version": "1.0.0",
+  "description": "AI-powered schedule planner for Texas State University",
+  "permissions": ["storage", "tabs"],
+  "host_permissions": [
+    "https://dw-prod.ec.txstate.edu/*",
+    "https://reg-prod.ec.txstate.edu/*",
+    "https://ml3392.app.n8n.cloud/*",
+    "https://api.openai.com/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "TXST Registration Helper"
+  }
+}

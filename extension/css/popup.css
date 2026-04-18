@@ -1,0 +1,123 @@
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+body {
+  width: 360px;
+  font-family: sans-serif;
+  background: #1a1a2e;
+  color: #e0e0e0;
+}
+
+/* Header */
+.header {
+  background: #501214;
+  padding: 12px 16px;
+  border-bottom: 2px solid #d4a843;
+}
+.header h1 {
+  font-size: 14px;
+  color: #fff;
+}
+
+/* Content area */
+.content {
+  padding: 16px;
+}
+
+/* Student info */
+.student-info {
+  font-size: 12px;
+  color: #aaa;
+  margin-bottom: 12px;
+}
+.student-info .name {
+  color: #fff;
+  font-weight: bold;
+  font-size: 13px;
+}
+
+/* Term dropdown */
+.term-select {
+  width: 100%;
+  padding: 8px;
+  background: #16213e;
+  color: #fff;
+  border: 1px solid #333;
+  border-radius: 4px;
+  font-size: 12px;
+  margin-bottom: 12px;
+}
+
+/* Mini calendar */
+.mini-calendar {
+  background: #16213e;
+  border-radius: 4px;
+  padding: 8px;
+  margin-bottom: 12px;
+  min-height: 120px;
+  font-size: 11px;
+}
+.mini-calendar table {
+  width: 100%;
+  border-collapse: collapse;
+}
+.mini-calendar th {
+  padding: 4px;
+  text-align: center;
+  color: #888;
+  font-weight: normal;
+  border-bottom: 1px solid #2a2a4a;
+}
+.mini-calendar td {
+  padding: 2px;
+  vertical-align: top;
+  height: 40px;
+  border-right: 1px solid #2a2a4a;
+}
+.mini-calendar td:last-child {
+  border-right: none;
+}
+
+/* Course block inside mini calendar */
+.course-block {
+  background: #501214;
+  color: #fff;
+  padding: 2px 4px;
+  border-radius: 2px;
+  font-size: 9px;
+  margin-bottom: 1px;
+  border-left: 2px solid #d4a843;
+}
+
+/* Empty state when no schedule is available */
+.no-schedule {
+  color: #666;
+  text-align: center;
+  padding: 20px 0;
+  font-size: 12px;
+}
+
+/* Plan semester button */
+.plan-btn {
+  width: 100%;
+  padding: 10px;
+  background: #501214;
+  color: #fff;
+  border: 1px solid #d4a843;
+  border-radius: 4px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.plan-btn:hover {
+  background: #6b1d1f;
+}
+
+/* Loading state */
+.loading {
+  text-align: center;
+  padding: 20px 0;
+  color: #888;
+  font-size: 12px;
+}
