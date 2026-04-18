@@ -1,0 +1,61 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <title>Bobcat Plus</title>
+    <link rel="stylesheet" href="css/tab.css" />
+  </head>
+  <body>
+    <div class="top-bar">
+      <h1>Bobcat Plus</h1>
+      <div class="controls">
+        <span class="student-name" id="studentName">Loading...</span>
+        <select id="termSelect"></select>
+      </div>
+    </div>
+
+    <div class="main">
+      <div class="calendar-panel">
+        <table class="calendar" id="calendar"></table>
+      </div>
+      <div class="right-panel">
+        <div class="saved-section">
+          <div class="saved-header">
+            <span>Schedules</span>
+          </div>
+          <div class="view-registered active" id="viewRegistered">
+            Current Registered Schedule
+          </div>
+          <div class="saved-list" id="savedList">
+            <div class="saved-empty" id="savedEmpty">
+              No saved schedules yet. Use the chat to generate one.
+            </div>
+          </div>
+        </div>
+        <div class="chat-section">
+          <div class="chat-header">Schedule Planner</div>
+          <div class="chat-messages" id="chatMessages">
+            <div class="chat-message system">
+              <div class="sender">System</div>
+              Select a future semester and describe your preferences to build a
+              schedule.
+            </div>
+          </div>
+          <div class="chat-input-area">
+            <textarea
+              class="chat-input"
+              id="chatInput"
+              rows="2"
+              placeholder="e.g. I don't like early mornings, keep Fridays light..."
+            ></textarea>
+            <button class="chat-send" id="chatSend">Send</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="status-bar" id="statusBar">Ready</div>
+
+    <script src="tab.js"></script>
+  </body>
+</html>
