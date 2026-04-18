@@ -312,3 +312,30 @@ body {
 }
 .color-swatch:hover { transform: scale(1.2); }
 .color-swatch.selected { border-color: var(--text); transform: scale(1.15); }
+
+/* ── Overview in Sidebar ── */
+.sidebar-overview {
+  border-top: 0.5px solid var(--border);
+  flex-shrink: 0;
+  overflow-y: auto;
+  max-height: 280px;
+}
+.sidebar-overview-header {
+  padding: 12px 20px 10px;
+  font-size: 13px; font-weight: 600; color: var(--text);
+  display: flex; justify-content: space-between; align-items: center;
+  cursor: pointer; user-select: none; letter-spacing: -0.2px;
+}
+.sidebar-overview-header:hover { background: var(--bg); }
+.sidebar-overview-body { padding: 0 20px 12px; }
+.sidebar-overview-body .ov-row { display: flex; gap: 8px; flex-wrap: wrap; }
+.sidebar-overview-body .ov-stat { flex: 1; min-width: 60px; }
+.sidebar-overview-body .ov-val { font-size: 20px; font-weight: 600; color: var(--text); letter-spacing: -0.5px; line-height: 1.1; }
+.sidebar-overview-body .ov-val.ov-red { color: #a03520; }
+.sidebar-overview-body .ov-label { font-size: 11px; color: var(--text3); margin-top: 2px; }
+.sidebar-overview-body .ov-sub { font-size: 11px; color: var(--text2); margin-top: 4px; display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+.sidebar-overview-body .ov-divider { height: 0.5px; background: var(--border); margin: 8px 0; }
+.sidebar-overview-body .ov-badge { display: inline-block; padding: 2px 7px; border-radius: 20px; font-size: 10px; font-weight: 500; }
+.sidebar-overview-body .ov-green { background: rgba(38,103,37,0.1); color: #266725; }
+.sidebar-overview-body .ov-blue  { background: rgba(0,112,150,0.1); color: #007096; }
+.sidebar-overview-body .ov-amber { background: rgba(100,72,12,0.1); color: #64480C; }
