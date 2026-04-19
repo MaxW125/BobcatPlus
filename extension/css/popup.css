@@ -29,6 +29,8 @@ body {
 .header {
   background: var(--maroon);
   padding: 14px 16px 12px;
+  border-bottom: 2px solid #AC9155;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.25);
 }
 .header h1 {
   font-size: 17px;
@@ -136,4 +138,16 @@ body {
   padding: 20px 0;
   color: var(--text3);
   font-size: 12px;
+}
+.header-brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.header-logo {
+  height: 24px;
+  width: auto;
+  object-fit: contain;
+  filter: brightness(0) invert(1);
 }
