@@ -371,3 +371,8 @@ body {
 .calendar-panel::-webkit-scrollbar-button {
   display: none;
 }
+
+.calendar-panel::-webkit-scrollbar-thumb {
+  min-height: 0;
+  max-height: 40px;
+}
