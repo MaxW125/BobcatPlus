@@ -8,7 +8,9 @@
     "https://dw-prod.ec.txstate.edu/*",
     "https://reg-prod.ec.txstate.edu/*",
     "https://ml3392.app.n8n.cloud/*",
-    "https://api.openai.com/*"
+    "https://api.openai.com/*",
+    "https://eis-prod.ec.txstate.edu/*",
+    "https://authentic.txstate.edu/*"
   ],
   "background": {
     "service_worker": "background.js"

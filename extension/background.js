@@ -1432,10 +1432,114 @@ async function getBannerPlanEvents(term) {
   }
 }
 
+// --- Registration API sometimes returns SAML auto-post HTML (fetch does not run JS).
+// Service worker has no DOMParser — use regex form extraction instead. ---
+function registrationBodyLooksLikeJson(text) {
+  const t = text.trim();
+  return t.startsWith("[") || t.startsWith("{");
+}
+
+function extractHtmlAttr(fragment, attrName) {
+  const re = new RegExp(
+    "\\b" + attrName + "\\s*=\\s*(['\"])([\\s\\S]*?)\\1",
+    "i",
+  );
+  const m = fragment.match(re);
+  return m ? m[2] : "";
+}
+
+function listFormBlocks(htmlText) {
+  const out = [];
+  const re = /<form\b([^>]*)>([\s\S]*?)<\/form>/gi;
+  let m;
+  while ((m = re.exec(htmlText))) {
+    out.push({ attrs: m[1], body: m[2], index: m.index });
+  }
+  return out;
+}
+
+function formInsideNoscript(htmlText, formIndex) {
+  const before = htmlText.slice(0, formIndex);
+  const open = before.lastIndexOf("<noscript");
+  const close = before.lastIndexOf("</noscript>");
+  return open > close;
+}
+
+function pickFormBlock(htmlText) {
+  const blocks = listFormBlocks(htmlText);
+  if (blocks.length === 0) return null;
+  const hasSaml = (b) =>
+    /name\s*=\s*["'](?:SAMLResponse|SAMLRequest|RelayState)["']/i.test(b.body);
+  const saml = blocks.find(hasSaml);
+  if (saml) return saml;
+  const outside = blocks.find((b) => !formInsideNoscript(htmlText, b.index));
+  return outside || blocks[0];
+}
+
+async function submitFirstFormFromHtmlSw(htmlText, baseHref) {
+  try {
+    const formMatch = pickFormBlock(htmlText);
+    if (!formMatch) return null;
+    const formAttrs = formMatch.attrs;
+    const formBody = formMatch.body;
+    let rawAction = extractHtmlAttr(formAttrs, "action");
+    if (rawAction && rawAction.trim().toLowerCase().startsWith("javascript:"))
+      return null;
+    const url =
+      !rawAction || rawAction.trim() === ""
+        ? new URL(baseHref)
+        : new URL(rawAction, baseHref);
+    const method = (
+      extractHtmlAttr(formAttrs, "method") || "GET"
+    ).toUpperCase();
+    const params = new URLSearchParams();
+    const inputRe = /<input\b([^>]*)>/gi;
+    let im;
+    while ((im = inputRe.exec(formBody))) {
+      const ia = im[1];
+      const name = extractHtmlAttr(ia, "name");
+      if (!name) continue;
+      const value = extractHtmlAttr(ia, "value") || "";
+      params.append(name, value);
+    }
+    const init = { credentials: "include", redirect: "follow" };
+    if (method === "GET") {
+      url.search = params.toString();
+      const r = await fetch(url.href, init);
+      return await r.text();
+    }
+    const r = await fetch(url.href, {
+      ...init,
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: params.toString(),
+    });
+    return await r.text();
+  } catch (e) {
+    console.log("[BobcatPlus] submitFirstFormFromHtmlSw:", e);
+    return null;
+  }
+}
+
+async function resolveRegistrationHtmlToJsonSw(initialText, baseHref) {
+  let text = initialText;
+  let samlHops = 0;
+  const maxHops = 8;
+  while (!registrationBodyLooksLikeJson(text) && samlHops < maxHops) {
+    const next = await submitFirstFormFromHtmlSw(text, baseHref);
+    if (next === null) break;
+    text = next;
+    samlHops++;
+  }
+  return { text, samlHops };
+}
+
 // --- Get current registered schedule ---
+// Used by popup.js (via getSchedule message). SAML-aware: follows redirect chains
+// that Banner returns when the session needs warming.
 async function getCurrentSchedule(term) {
   try {
-    await fetch(
+    const r1 = await fetch(
       "https://reg-prod.ec.txstate.edu/StudentRegistrationSsb/ssb/term/search?mode=registration",
       {
         method: "POST",
@@ -1444,19 +1548,103 @@ async function getCurrentSchedule(term) {
         body: new URLSearchParams({ term: term }).toString(),
       },
     );
-    await fetch(
+    console.log("[BobcatPlus] term/search status:", r1.status);
+
+    const r2 = await fetch(
       "https://reg-prod.ec.txstate.edu/StudentRegistrationSsb/ssb/classRegistration/classRegistration",
       { credentials: "include" },
     );
+    console.log("[BobcatPlus] classRegistration status:", r2.status);
+
     const response = await fetch(
       "https://reg-prod.ec.txstate.edu/StudentRegistrationSsb/ssb/classRegistration/getRegistrationEvents?termFilter=",
       { credentials: "include" },
     );
-    const data = await response.json();
-    return data;
+    console.log("[BobcatPlus] getRegistrationEvents status:", response.status);
+    const eventsBase =
+      "https://reg-prod.ec.txstate.edu/StudentRegistrationSsb/ssb/classRegistration/getRegistrationEvents";
+    let text = await response.text();
+    const resolved = await resolveRegistrationHtmlToJsonSw(text, eventsBase);
+    text = resolved.text;
+    if (!registrationBodyLooksLikeJson(text)) {
+      console.log(
+        "[BobcatPlus] getRegistrationEvents non-JSON after SAML hops:",
+        resolved.samlHops,
+        text.slice(0, 80),
+      );
+      return null;
+    }
+    return JSON.parse(text);
   } catch (e) {
+    console.log("[BobcatPlus] getCurrentSchedule error:", e);
     return null;
   }
+}
+
+// --- Login popup: opens DegreeWorks login, watches for success, closes automatically ---
+function openLoginPopup(sendResponse) {
+  const DW_URL =
+    "https://dw-prod.ec.txstate.edu/responsiveDashboard/worksheets/WEB31";
+  const REG_URL =
+    "https://reg-prod.ec.txstate.edu/StudentRegistrationSsb/ssb/registration/registration";
+
+  const DW_SUCCESS = "responsiveDashboard/worksheets";
+  const REG_SUCCESS = "ssb/registration/registration";
+
+  let popupWindowId = null;
+  let dwDone = false;
+  let cancelled = false;
+
+  function cleanup() {
+    chrome.tabs.onUpdated.removeListener(onTabUpdated);
+    chrome.windows.onRemoved.removeListener(onWindowClosed);
+  }
+
+  function onTabUpdated(tabId, changeInfo, tab) {
+    if (tab.windowId !== popupWindowId) return;
+    if (changeInfo.status !== "complete" || !tab.url) return;
+
+    // Step 1: DegreeWorks login succeeded — navigate to registration to warm session
+    if (!dwDone && tab.url.includes(DW_SUCCESS)) {
+      dwDone = true;
+      chrome.tabs.update(tabId, { url: REG_URL });
+      return;
+    }
+
+    // Step 2: Registration session is warm — close popup and signal success
+    if (dwDone && tab.url.includes(REG_SUCCESS)) {
+      cleanup();
+      setTimeout(() => {
+        chrome.windows.remove(popupWindowId, () => {
+          chrome.runtime.sendMessage({ type: "loginSuccess" });
+        });
+      }, 600);
+    }
+  }
+
+  function onWindowClosed(windowId) {
+    if (windowId !== popupWindowId) return;
+    if (cancelled) return;
+    cancelled = true;
+    cleanup();
+    chrome.runtime.sendMessage({ type: "loginCancelled" });
+  }
+
+  chrome.windows.create(
+    {
+      url: DW_URL,
+      type: "popup",
+      width: 520,
+      height: 680,
+      focused: true,
+    },
+    (win) => {
+      popupWindowId = win.id;
+      chrome.tabs.onUpdated.addListener(onTabUpdated);
+      chrome.windows.onRemoved.addListener(onWindowClosed);
+      sendResponse({ started: true });
+    },
+  );
 }
 
 // --- Listen for messages from popup and full tab ---
@@ -1471,6 +1659,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.action === "openFullTab") {
     chrome.tabs.create({ url: chrome.runtime.getURL("tab.html") });
     sendResponse({ opened: true });
+  }
+
+  if (message.action === "openLoginPopup") {
+    openLoginPopup(sendResponse);
+    return true; // keep channel open for async response
   }
 
   if (message.action === "getStudentInfo") {

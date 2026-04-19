@@ -18,8 +18,6 @@ function stripHtml(html) {
 
 // ============================================================
 // REGISTERED COURSES COMPRESSOR
-// Converts raw calendar events (from getRegistrationEvents) into
-// a lean format the LLM can use for conflict avoidance
 // ============================================================
 
 function compressRegisteredForLLM(events) {
@@ -64,9 +62,6 @@ function compressRegisteredForLLM(events) {
 
 // ============================================================
 // PRE-FILTER
-// Removes sections that conflict with already-registered courses
-// and annotates each remaining section with conflictsWith[]
-// so the LLM has explicit guidance rather than doing the math itself
 // ============================================================
 
 function applyPreFilter(compressed, registeredCourses) {
@@ -78,7 +73,6 @@ function applyPreFilter(compressed, registeredCourses) {
             if (section.online || !section.days || !section.start) {
               return { ...section, conflictsWith: [] };
             }
-
             const conflicts = [];
             for (const reg of registeredCourses) {
               if (!reg.days || !reg.start) continue;
@@ -97,7 +91,6 @@ function applyPreFilter(compressed, registeredCourses) {
             return { ...section, conflictsWith: conflicts };
           })
           .filter((s) => s.conflictsWith.length === 0);
-
         return { ...course, sections: filteredSections };
       })
       .filter((c) => c.sections.length > 0),
@@ -255,36 +248,61 @@ let savedSchedules = [];
 let activeView = "registered";
 let conversationHistory = [];
 let cachedRawData = null;
-let cachedRegisteredCourses = []; // for LLM conflict avoidance (main)
-let cachedRegisteredTerm = null; // which term those registered courses belong to (main)
+let cachedRegisteredCourses = [];
+let cachedRegisteredTerm = null;
+
+// Mi's auth/fetch state flags
+let registeredFetchCompleted = false;
+let registeredFetchOk = false;
 
 // Max's manual builder state
-let bannerPlans = []; // [{ name, crns, planNumber? }]
-let registeredScheduleCache = {}; // term → events array (UI cache)
+let bannerPlans = [];
+let registeredScheduleCache = {};
 let eligibleCourses = [];
 let expandedCourseKey = null;
 let selectedSectionByCourse = {};
-let manualDraft = []; // [{ key, subject, courseNumber, section }]
+let manualDraft = [];
+
+// ============================================================
+// MI'S DEBUG LOGGER (fails silently — strip before production)
+// ============================================================
+function dbgLog(location, message, data, hypothesisId) {
+  fetch("http://127.0.0.1:7750/ingest/853901e6-d4c8-4b6b-b2a7-9b1a93c88eb5", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Debug-Session-Id": "782a56",
+    },
+    body: JSON.stringify({
+      sessionId: "782a56",
+      location,
+      message,
+      data: data || {},
+      timestamp: Date.now(),
+      hypothesisId,
+    }),
+  }).catch(() => {});
+}
 
 // ============================================================
 // INIT
 // ============================================================
 
 (async () => {
+  const reloadMark = sessionStorage.getItem("bobcat_dbg_post_login_reload");
+  if (reloadMark) {
+    sessionStorage.removeItem("bobcat_dbg_post_login_reload");
+    dbgLog(
+      "tab.js:init",
+      "tab loaded after post-login location.reload",
+      { reloadMark },
+      "H2-verify",
+    );
+  }
+
   chrome.runtime.sendMessage({ action: "getStudentInfo" }, (student) => {
     if (student) {
-      currentStudent = student;
-      $("studentName").textContent =
-        student.name + " | " + student.major + " | " + student.degree;
-      const ss = document.getElementById("sidebarStudent");
-      if (ss)
-        ss.innerHTML =
-          "<strong>" +
-          student.name +
-          "</strong><br>" +
-          student.major +
-          " | " +
-          student.degree;
+      applyStudentInfoToUI(student);
     } else {
       $("studentName").textContent = "Not logged in";
     }
@@ -322,9 +340,18 @@ let manualDraft = []; // [{ key, subject, courseNumber, section }]
 
     currentTerm = terms[currentIdx].code;
     buildEmptyCalendar();
-    loadSchedule(currentTerm);
     loadBannerPlans(currentTerm);
     renderManualDraft();
+
+    (async () => {
+      const ok = await checkAuth();
+      if (ok) {
+        await loadSchedule(currentTerm);
+      } else {
+        $("statusBar").textContent =
+          "Use Import Schedule to sign in and load your registration.";
+      }
+    })();
   });
 })();
 
@@ -332,16 +359,15 @@ let manualDraft = []; // [{ key, subject, courseNumber, section }]
 // TERM CHANGE
 // ============================================================
 
-$("termSelect").addEventListener("change", (e) => {
+$("termSelect").addEventListener("change", async (e) => {
   currentTerm = e.target.value;
   analysisResults = null;
   cachedRawData = null;
-  // Reset LLM conflict-avoidance cache (main)
   cachedRegisteredCourses = [];
   cachedRegisteredTerm = null;
   conversationHistory = [];
   activeView = "registered";
-  // Reset manual builder state (Max)
+  // Reset Max's manual builder state
   bannerPlans = [];
   registeredScheduleCache = {};
   eligibleCourses = [];
@@ -352,9 +378,469 @@ $("termSelect").addEventListener("change", (e) => {
   renderEligibleList();
   renderSavedList();
   buildEmptyCalendar();
-  loadSchedule(currentTerm);
   loadBannerPlans(currentTerm);
+  if (await checkAuth()) {
+    await loadSchedule(currentTerm);
+  } else {
+    $("statusBar").textContent =
+      "Use Import Schedule to sign in and load your registration.";
+  }
 });
+
+// ============================================================
+// MI'S AUTH + IMPORT FLOW
+// ============================================================
+
+async function checkAuth() {
+  try {
+    const [dwRes, regRes] = await Promise.all([
+      fetch(
+        "https://dw-prod.ec.txstate.edu/responsiveDashboard/api/students/myself",
+        { credentials: "include" },
+      ),
+      fetch(
+        "https://reg-prod.ec.txstate.edu/StudentRegistrationSsb/ssb/classSearch/getTerms?searchTerm=&offset=1&max=1",
+        { credentials: "include" },
+      ),
+    ]);
+    return dwRes.ok && regRes.ok;
+  } catch (e) {
+    return false;
+  }
+}
+
+const importBtn = document.getElementById("importBtn");
+if (importBtn) {
+  importBtn.addEventListener("click", async () => {
+    importBtn.disabled = true;
+    importBtn.classList.add("loading");
+    importBtn.textContent = "Checking session...";
+
+    const authed = await checkAuth();
+    const importSvg = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg> Import Schedule`;
+
+    if (!authed) {
+      importBtn.textContent = "Waiting for login...";
+      addMessage(
+        "system",
+        "Opening TXST login — sign in and the import will start automatically.",
+      );
+
+      chrome.runtime.sendMessage({ action: "openLoginPopup" });
+
+      const loginListener = (msg) => {
+        if (msg.type === "loginSuccess") {
+          chrome.runtime.onMessage.removeListener(loginListener);
+          addMessage("system", "Login successful! Loading your schedule next…");
+
+          (async () => {
+            dbgLog(
+              "tab.js:loginSuccess",
+              "post-login async started",
+              { currentTerm },
+              "H2",
+            );
+            importBtn.textContent = "Importing...";
+            importBtn.classList.add("loading");
+
+            const authed2 = await checkAuth();
+            dbgLog(
+              "tab.js:loginSuccess",
+              "checkAuth after loginSuccess",
+              { authed: authed2 },
+              "H1",
+            );
+
+            if (!authed2) {
+              addMessage(
+                "system",
+                "TXST session not ready yet. Wait a few seconds and click Import Schedule again.",
+              );
+              importBtn.disabled = false;
+              importBtn.classList.remove("loading");
+              importBtn.innerHTML = importSvg;
+              return;
+            }
+
+            dbgLog(
+              "tab.js:loginSuccess",
+              "before waitWithChatCountdown",
+              {},
+              "H3",
+            );
+            await waitWithChatCountdown(1);
+            dbgLog(
+              "tab.js:loginSuccess",
+              "after waitWithChatCountdown",
+              {},
+              "H3",
+            );
+
+            analysisResults = null;
+            cachedRawData = null;
+            cachedRegisteredCourses = [];
+            cachedRegisteredTerm = null;
+            conversationHistory = [];
+
+            $("statusBar").textContent = "Importing schedule...";
+            dbgLog(
+              "tab.js:loginSuccess",
+              "before loadSchedule(currentTerm)",
+              { term: currentTerm },
+              "H3",
+            );
+            await loadSchedule(currentTerm);
+            dbgLog(
+              "tab.js:loginSuccess",
+              "after loadSchedule",
+              {
+                registeredFetchOk,
+                registeredFetchCompleted,
+                cachedCourses: cachedRegisteredCourses.length,
+              },
+              "H4",
+            );
+
+            sessionStorage.setItem(
+              "bobcat_dbg_post_login_reload",
+              String(Date.now()),
+            );
+            dbgLog(
+              "tab.js:loginSuccess",
+              "before location.reload (post-login)",
+              {
+                registeredFetchOk,
+                cachedCourses: cachedRegisteredCourses.length,
+              },
+              "H2",
+            );
+            location.reload();
+          })().catch((err) => {
+            dbgLog(
+              "tab.js:loginSuccess",
+              "post-login async catch",
+              { err: err && err.message ? err.message : String(err) },
+              "H5",
+            );
+            console.error("[BobcatPlus] post-login import:", err);
+            addMessage(
+              "system",
+              "Could not finish loading your schedule. Use Refresh in the chat or Import Schedule again.",
+            );
+            importBtn.disabled = false;
+            importBtn.classList.remove("loading");
+            importBtn.innerHTML = importSvg;
+          });
+        }
+
+        if (msg.type === "loginCancelled") {
+          chrome.runtime.onMessage.removeListener(loginListener);
+          addMessage("system", "Login cancelled. Click Import to try again.");
+          importBtn.disabled = false;
+          importBtn.classList.remove("loading");
+          importBtn.innerHTML = importSvg;
+        }
+      };
+      chrome.runtime.onMessage.addListener(loginListener);
+      return;
+    }
+
+    // Auth is good — reload schedule fresh
+    importBtn.textContent = "Importing...";
+    $("statusBar").textContent = "Importing schedule...";
+    analysisResults = null;
+    cachedRawData = null;
+    cachedRegisteredCourses = [];
+    cachedRegisteredTerm = null;
+    conversationHistory = [];
+
+    await loadSchedule(currentTerm);
+
+    importBtn.disabled = false;
+    importBtn.classList.remove("loading");
+    importBtn.innerHTML = importSvg;
+  });
+}
+
+// ============================================================
+// MI'S getCurrentSchedule — runs in tab.js (page context)
+// Uses DOMParser to follow SAML redirect chains that fetch()
+// won't execute as JS. Shares the browser's cookie jar.
+// ============================================================
+
+function waitAnimationFrames(n) {
+  let p = Promise.resolve();
+  for (let i = 0; i < n; i++) {
+    p = p.then(() => new Promise((resolve) => requestAnimationFrame(resolve)));
+  }
+  return p;
+}
+
+function registrationResponseLooksLikeJson(text) {
+  const t = text.trim();
+  return t.startsWith("[") || t.startsWith("{");
+}
+
+function pickSamlPostForm(doc) {
+  const forms = [...doc.querySelectorAll("form")];
+  if (forms.length === 0) return null;
+  const hasRelay = (f) =>
+    f.querySelector(
+      'input[name="SAMLResponse"],input[name="SAMLRequest"],input[name="RelayState"]',
+    );
+  const withSaml = forms.find(hasRelay);
+  if (withSaml) return withSaml;
+  const outsideNoscript = forms.find((f) => !f.closest("noscript"));
+  return outsideNoscript || forms[0];
+}
+
+async function submitFirstFormFromHtml(htmlText, baseHref) {
+  try {
+    const doc = new DOMParser().parseFromString(htmlText, "text/html");
+    const form = pickSamlPostForm(doc);
+    if (!form) return null;
+    const rawAction = form.getAttribute("action");
+    if (rawAction && rawAction.trim().toLowerCase().startsWith("javascript:"))
+      return null;
+    const url =
+      !rawAction || rawAction.trim() === ""
+        ? new URL(baseHref)
+        : new URL(rawAction, baseHref);
+    const method = (form.getAttribute("method") || "GET").toUpperCase();
+    const params = new URLSearchParams();
+    form.querySelectorAll("input[name]").forEach((input) => {
+      const name = input.getAttribute("name");
+      if (name) params.append(name, input.value);
+    });
+    form.querySelectorAll("select[name]").forEach((sel) => {
+      const name = sel.getAttribute("name");
+      if (name) params.append(name, sel.value);
+    });
+    form.querySelectorAll("textarea[name]").forEach((ta) => {
+      const name = ta.getAttribute("name");
+      if (name) params.append(name, ta.value);
+    });
+    const init = { credentials: "include", redirect: "follow" };
+    if (method === "GET") {
+      url.search = params.toString();
+      const r = await fetch(url.href, init);
+      return await r.text();
+    }
+    const r = await fetch(url.href, {
+      ...init,
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: params.toString(),
+    });
+    return await r.text();
+  } catch (e) {
+    console.log("[BobcatPlus] submitFirstFormFromHtml:", e);
+    return null;
+  }
+}
+
+async function resolveRegistrationHtmlToJson(initialText, baseHref) {
+  let text = initialText;
+  let samlHops = 0;
+  const maxHops = 8;
+  while (!registrationResponseLooksLikeJson(text) && samlHops < maxHops) {
+    const next = await submitFirstFormFromHtml(text, baseHref);
+    if (next === null) break;
+    text = next;
+    samlHops++;
+  }
+  return { text, samlHops };
+}
+
+async function getCurrentSchedule(term) {
+  try {
+    await fetch(
+      "https://reg-prod.ec.txstate.edu/StudentRegistrationSsb/ssb/term/search?mode=registration",
+      {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({ term: term }).toString(),
+      },
+    );
+    await fetch(
+      "https://reg-prod.ec.txstate.edu/StudentRegistrationSsb/ssb/classRegistration/classRegistration",
+      { credentials: "include" },
+    );
+    const response = await fetch(
+      "https://reg-prod.ec.txstate.edu/StudentRegistrationSsb/ssb/classRegistration/getRegistrationEvents?termFilter=",
+      { credentials: "include" },
+    );
+    let text = await response.text();
+    const eventsBase =
+      "https://reg-prod.ec.txstate.edu/StudentRegistrationSsb/ssb/classRegistration/getRegistrationEvents";
+    const resolved = await resolveRegistrationHtmlToJson(text, eventsBase);
+    text = resolved.text;
+    if (!registrationResponseLooksLikeJson(text)) {
+      console.log(
+        "[BobcatPlus] getRegistrationEvents returned non-JSON:",
+        text.slice(0, 100),
+      );
+      return null;
+    }
+    return JSON.parse(text);
+  } catch (e) {
+    console.log("[BobcatPlus] getCurrentSchedule error:", e);
+    return null;
+  }
+}
+
+// ============================================================
+// REGISTERED SCHEDULE
+// ============================================================
+
+$("viewRegistered").addEventListener("click", async () => {
+  activeView = "registered";
+  renderSavedList();
+  if (await checkAuth()) {
+    await loadSchedule(currentTerm);
+  } else {
+    $("statusBar").textContent =
+      "Use Import Schedule to sign in and load your registration.";
+  }
+});
+
+async function loadSchedule(term) {
+  registeredFetchCompleted = false;
+  $("statusBar").textContent = "Loading schedule...";
+
+  let data = await getCurrentSchedule(term);
+  // Retry loop — Banner occasionally needs a moment to warm up
+  if (data === null) {
+    const maxExtra = 8;
+    for (let i = 0; i < maxExtra; i++) {
+      await waitAnimationFrames(2);
+      data = await getCurrentSchedule(term);
+      if (data !== null) break;
+    }
+  }
+
+  registeredFetchOk = data !== null;
+  registeredFetchCompleted = true;
+
+  dbgLog(
+    "tab.js:loadSchedule",
+    "fetch settled",
+    {
+      term,
+      registeredFetchOk,
+      dataNull: data === null,
+      dataLen: Array.isArray(data) ? data.length : -1,
+    },
+    "H4",
+  );
+
+  if (data && data.length > 0) {
+    removeExistingScheduleRefreshPrompts();
+    // Populate both the UI cache (Max) and the LLM conflict-avoidance cache (main)
+    registeredScheduleCache[term] = data;
+    cachedRegisteredCourses = compressRegisteredForLLM(data);
+    cachedRegisteredTerm = term;
+    renderCoursesOnCalendar(data);
+    const unique = new Set(data.map((e) => e.crn));
+    $("statusBar").textContent = unique.size + " registered courses";
+  } else if (data === null) {
+    cachedRegisteredCourses = [];
+    cachedRegisteredTerm = term;
+    buildEmptyCalendar();
+    $("statusBar").textContent =
+      "Could not reach registration data. Try Import Schedule again.";
+    addScheduleRefreshPrompt();
+  } else {
+    removeExistingScheduleRefreshPrompts();
+    cachedRegisteredCourses = [];
+    cachedRegisteredTerm = term;
+    buildEmptyCalendar();
+    $("statusBar").textContent = "No registered courses for this term";
+  }
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function removeExistingScheduleRefreshPrompts() {
+  document
+    .querySelectorAll("[data-schedule-refresh-prompt]")
+    .forEach((el) => el.remove());
+}
+
+function createCountdownSystemMessage() {
+  const div = document.createElement("div");
+  div.className = "chat-message system";
+  div.innerHTML =
+    '<div class="sender">System</div><div class="countdown-body"></div>';
+  $("chatMessages").appendChild(div);
+  $("chatMessages").scrollTop = $("chatMessages").scrollHeight;
+  const body = div.querySelector(".countdown-body");
+  return {
+    setHtml(html) {
+      body.innerHTML = html;
+      $("chatMessages").scrollTop = $("chatMessages").scrollHeight;
+    },
+    remove() {
+      div.remove();
+    },
+  };
+}
+
+async function waitWithChatCountdown(totalSeconds) {
+  const msg = createCountdownSystemMessage();
+  for (let i = totalSeconds; i >= 1; i--) {
+    msg.setHtml(
+      "Waiting for your TXST registration session to settle… <strong>" +
+        i +
+        "</strong>s until we load your schedule.",
+    );
+    await sleep(1000);
+  }
+  msg.remove();
+}
+
+function addScheduleRefreshPrompt() {
+  removeExistingScheduleRefreshPrompts();
+  const div = document.createElement("div");
+  div.className = "chat-message system";
+  div.setAttribute("data-schedule-refresh-prompt", "1");
+  div.innerHTML =
+    '<div class="sender">System</div><div>Your schedule didn\u2019t load (registration didn\u2019t respond yet). Use Refresh to try again without reloading the page.</div><button type="button" class="save-schedule-btn">Refresh</button>';
+  const btn = div.querySelector("button");
+  btn.addEventListener("click", async () => {
+    btn.disabled = true;
+    const prev = btn.textContent;
+    btn.textContent = "Loading…";
+    await loadSchedule(currentTerm);
+    btn.textContent = prev;
+    btn.disabled = false;
+    if (registeredFetchOk) {
+      div.remove();
+      addMessage("system", "Schedule loaded.");
+    }
+  });
+  $("chatMessages").appendChild(div);
+  $("chatMessages").scrollTop = $("chatMessages").scrollHeight;
+}
+
+function applyStudentInfoToUI(student) {
+  if (!student) return;
+  currentStudent = student;
+  $("studentName").textContent =
+    student.name + " | " + student.major + " | " + student.degree;
+  const ss = document.getElementById("sidebarStudent");
+  if (ss)
+    ss.innerHTML =
+      "<strong>" +
+      student.name +
+      "</strong><br>" +
+      student.major +
+      " | " +
+      student.degree;
+}
 
 // ============================================================
 // ELIGIBLE COURSES PICKER (Max's manual builder)
@@ -575,7 +1061,6 @@ $("runAnalysisBtn").addEventListener("click", async () => {
     $("statusBar").textContent = "Select a term first.";
     return;
   }
-  // Reuse cached results if the chat already ran analysis for this term
   if (analysisResults && (analysisResults.eligible || []).length > 0) {
     eligibleCourses = analysisResults.eligible;
     renderEligibleList();
@@ -615,8 +1100,6 @@ $("manualSaveTxstBtn").addEventListener("click", async () => {
     $("statusBar").textContent = resp.error || "Save failed.";
     return;
   }
-
-  // Clear draft state after saving
   manualDraft = [];
   expandedCourseKey = null;
   selectedSectionByCourse = {};
@@ -625,8 +1108,6 @@ $("manualSaveTxstBtn").addEventListener("click", async () => {
   setManualVisible(false);
   renderManualDraft();
   $("statusBar").textContent = "Saved: " + planName + ".";
-
-  // Reload from TXST so it shows up as a banner plan
   await loadBannerPlans(currentTerm);
 });
 
@@ -664,49 +1145,6 @@ $("newDraftBtn").addEventListener("click", () => {
 });
 
 // ============================================================
-// REGISTERED SCHEDULE
-// ============================================================
-
-$("viewRegistered").addEventListener("click", () => {
-  activeView = "registered";
-  renderSavedList();
-  loadSchedule(currentTerm);
-});
-
-function loadSchedule(term) {
-  // Serve from UI cache if available
-  if (registeredScheduleCache[term]) {
-    const data = registeredScheduleCache[term];
-    // Keep LLM conflict-avoidance cache in sync
-    cachedRegisteredCourses = compressRegisteredForLLM(data);
-    cachedRegisteredTerm = term;
-    renderCoursesOnCalendar(data);
-    const unique = new Set(data.map((e) => e.crn));
-    $("statusBar").textContent = unique.size + " registered courses";
-    return;
-  }
-
-  $("statusBar").textContent = "Loading schedule...";
-  chrome.runtime.sendMessage({ action: "getSchedule", term: term }, (data) => {
-    if (activeView !== "registered" && activeView !== "draft") return;
-    if (data && data.length > 0) {
-      // Populate both caches
-      registeredScheduleCache[term] = data;
-      cachedRegisteredCourses = compressRegisteredForLLM(data);
-      cachedRegisteredTerm = term;
-      renderCoursesOnCalendar(data);
-      const unique = new Set(data.map((e) => e.crn));
-      $("statusBar").textContent = unique.size + " registered courses";
-    } else {
-      cachedRegisteredCourses = [];
-      cachedRegisteredTerm = term;
-      buildEmptyCalendar();
-      $("statusBar").textContent = "No registered courses for this term";
-    }
-  });
-}
-
-// ============================================================
 // SAVED SCHEDULES + BANNER PLANS
 // ============================================================
 
@@ -728,7 +1166,6 @@ function renderSavedList() {
 
   list.innerHTML = "";
 
-  // Show active draft as first item if in draft mode
   if (activeView === "draft") {
     const draftItem = document.createElement("div");
     draftItem.className = "saved-item active";
@@ -750,7 +1187,6 @@ function renderSavedList() {
     return;
   }
 
-  // Local AI-generated schedules
   termSchedules.forEach((schedule) => {
     const idx = savedSchedules.indexOf(schedule);
     const item = document.createElement("div");
@@ -776,7 +1212,6 @@ function renderSavedList() {
     list.appendChild(item);
   });
 
-  // Banner (TXST) plans fetched from Plan Ahead
   bannerPlans.forEach((plan, pi) => {
     const bannerKey = "banner:" + pi;
     const item = document.createElement("div");
@@ -788,7 +1223,6 @@ function renderSavedList() {
       "</span>" +
       '<span class="delete-btn txst-delete" title="Delete from TXST">×</span>';
 
-    // TXST delete handler
     item.querySelector(".txst-delete").addEventListener("click", async (e) => {
       e.stopPropagation();
       if (!confirm('Delete "' + plan.name + '" from TXST and Bobcat Plus?'))
@@ -814,7 +1248,6 @@ function renderSavedList() {
       setTimeout(() => loadBannerPlans(currentTerm), 1500);
     });
 
-    // Click to view plan calendar
     item.addEventListener("click", async (e) => {
       if (e.target.classList.contains("delete-btn")) return;
       activeView = bannerKey;
@@ -853,7 +1286,6 @@ function renderSavedList() {
     list.appendChild(item);
   });
 
-  // Delete handlers for local saved schedules
   list.querySelectorAll(".delete-btn:not(.txst-delete)").forEach((btn) => {
     btn.addEventListener("click", (e) => {
       e.stopPropagation();
@@ -1089,10 +1521,7 @@ function sectionsConflict(a, b) {
   return aStart < bEnd && bStart < aEnd;
 }
 
-// Returns the first conflicting pair {a, b} or null if clean
-// Also checks against already-registered courses (main's version)
 function findFirstConflict(courses) {
-  // Check within the proposed schedule
   for (let i = 0; i < courses.length; i++) {
     for (let j = i + 1; j < courses.length; j++) {
       if (sectionsConflict(courses[i], courses[j])) {
@@ -1100,7 +1529,6 @@ function findFirstConflict(courses) {
       }
     }
   }
-  // Check against registered courses — only if same term
   if (cachedRegisteredTerm === currentTerm) {
     for (const proposed of courses) {
       if (cachedRegisteredCourses.some((r) => r.crn === proposed.crn)) continue;
@@ -1139,7 +1567,6 @@ async function sendChat() {
   addMessage("user", input);
   $("chatInput").value = "";
 
-  // Step 1: run analysis if we haven't yet for this term
   if (!analysisResults) {
     addMessage(
       "system",
@@ -1162,7 +1589,6 @@ async function sendChat() {
     );
   }
 
-  // Step 2: get API key
   const { openaiKey } = await chrome.storage.local.get("openaiKey");
   if (!openaiKey) {
     addMessage(
@@ -1175,15 +1601,11 @@ async function sendChat() {
   $("statusBar").textContent = "Thinking...";
 
   try {
-    // Step 3: build message
     const isFirstTurn = conversationHistory.length === 0;
     let userMessage;
 
     if (isFirstTurn) {
       const compressed = compressForLLM(cachedRawData);
-
-      // Only use registered courses for conflict avoidance if they're from the same
-      // term being planned. Don't let Summer registrations block Fall planning.
       const planningTerm = currentTerm;
       const relevantRegistered =
         cachedRegisteredTerm === planningTerm ? cachedRegisteredCourses : [];
@@ -1222,7 +1644,6 @@ async function sendChat() {
 
     conversationHistory.push({ role: "user", content: userMessage });
 
-    // Step 4: call OpenAI with up to 3 retry attempts if conflicts are found
     let validSchedules = [];
     let attempts = 0;
     const MAX_ATTEMPTS = 3;
@@ -1238,11 +1659,10 @@ async function sendChat() {
               `"${d.name}": ${d.course1} (${d.days1} ${d.start1}-${d.end1}) conflicts with ${d.course2} (${d.days2} ${d.start2}-${d.end2})`,
           )
           .join("; ");
-        const retryMsg = {
+        conversationHistory.push({
           role: "user",
           content: `Your previous schedules had time conflicts. Please regenerate all 3 schedules fixing these conflicts: ${conflictDetails}. Double-check every pair of in-person sections that share any day.`,
-        };
-        conversationHistory.push(retryMsg);
+        });
         $("statusBar").textContent =
           `Fixing conflicts (attempt ${attempts})...`;
       }
@@ -1275,7 +1695,6 @@ async function sendChat() {
         content: data.choices[0].message.content,
       });
 
-      // Step 5: validate conflicts
       const conflicted = [];
       lastConflictDetails = [];
       for (const schedule of result.schedules) {
@@ -1338,11 +1757,9 @@ async function sendChat() {
   }
 }
 
-// Renders one AI-generated schedule as a chat bubble with Save + Preview buttons
 function addScheduleOption(schedule) {
   const { name, rationale, totalCredits, courses } = schedule;
 
-  // Convert LLM format → format renderSavedScheduleOnCalendar expects (new courses only)
   const calendarCourses = courses.map((c) => ({
     subject: c.course.split(" ")[0],
     courseNumber: c.course.split(" ")[1],
@@ -1352,7 +1769,6 @@ function addScheduleOption(schedule) {
     endTime: c.end ? c.end.slice(0, 2) + ":" + c.end.slice(2) : null,
   }));
 
-  // Prepend already-registered courses so preview/save shows the full picture
   const registeredAsCalendar = cachedRegisteredCourses.map((r) => ({
     subject: r.course.split(" ")[0],
     courseNumber: r.course.split(" ")[1],
@@ -1363,7 +1779,6 @@ function addScheduleOption(schedule) {
   }));
   const fullCalendarCourses = [...registeredAsCalendar, ...calendarCourses];
 
-  // Show already-registered courses at top of chat bubble
   const registeredLines = cachedRegisteredCourses
     .map((r) => {
       const time = r.days
@@ -1447,7 +1862,7 @@ function addScheduleOption(schedule) {
 }
 
 // ============================================================
-// ANALYSIS RUNNER (talks to background.js)
+// ANALYSIS RUNNER
 // ============================================================
 
 function runAnalysisAndWait() {
@@ -1455,15 +1870,10 @@ function runAnalysisAndWait() {
     const results = { eligible: [], blocked: [], notOffered: [], needed: [] };
 
     const listener = (message) => {
-      if (message.type === "status") {
+      if (message.type === "status")
         $("statusBar").textContent = message.message;
-      }
-      if (message.type === "eligible") {
-        results.eligible.push(message.data);
-      }
-      if (message.type === "blocked") {
-        results.blocked.push(message.data);
-      }
+      if (message.type === "eligible") results.eligible.push(message.data);
+      if (message.type === "blocked") results.blocked.push(message.data);
       if (message.type === "done") {
         chrome.runtime.onMessage.removeListener(listener);
         results.notOffered = message.data.notOffered;

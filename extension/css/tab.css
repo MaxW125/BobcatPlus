@@ -1097,3 +1097,33 @@ body {
   border-color: var(--text);
   transform: scale(1.15);
 }
+
+/* ── Import Schedule button (Mi's feature) ── */
+.import-btn {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px;
+  font-size: 11px;
+  font-weight: 500;
+  border-radius: 6px;
+  border: 0.5px solid var(--border);
+  background: var(--surface);
+  color: var(--text2);
+  cursor: pointer;
+  font-family: inherit;
+  transition:
+    background 0.15s,
+    opacity 0.15s;
+  white-space: nowrap;
+}
+.import-btn:hover {
+  background: var(--bg);
+}
+.import-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.import-btn.loading {
+  opacity: 0.7;
+}
