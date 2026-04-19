@@ -340,16 +340,17 @@ function dbgLog(location, message, data, hypothesisId) {
 
     currentTerm = terms[currentIdx].code;
     buildEmptyCalendar();
-    loadBannerPlans(currentTerm);
     renderManualDraft();
 
     (async () => {
       const ok = await checkAuth();
       if (ok) {
         await loadSchedule(currentTerm);
+        await loadBannerPlans(currentTerm); // session is warm after loadSchedule
       } else {
         $("statusBar").textContent =
           "Use Import Schedule to sign in and load your registration.";
+        await loadBannerPlans(currentTerm); // still try — plans don't need registration session
       }
     })();
   });
@@ -378,12 +379,13 @@ $("termSelect").addEventListener("change", async (e) => {
   renderEligibleList();
   renderSavedList();
   buildEmptyCalendar();
-  loadBannerPlans(currentTerm);
   if (await checkAuth()) {
     await loadSchedule(currentTerm);
+    await loadBannerPlans(currentTerm); // session is warm after loadSchedule
   } else {
     $("statusBar").textContent =
       "Use Import Schedule to sign in and load your registration.";
+    await loadBannerPlans(currentTerm); // plans don't need the registration session
   }
 });
 
