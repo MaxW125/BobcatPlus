@@ -22,6 +22,7 @@
         <div class="saved-section">
           <div class="saved-header">
             <span>Schedules</span>
+            <button type="button" id="newDraftBtn" class="manual-run-btn">+</button>
           </div>
           <div class="view-registered active" id="viewRegistered">
             Current Registered Schedule
@@ -30,6 +31,32 @@
             <div class="saved-empty" id="savedEmpty">
               No saved schedules yet. Use the chat to generate one.
             </div>
+          </div>
+        </div>
+        <div class="manual-section">
+          <div class="manual-header">
+            <span>Eligible Courses</span>
+            <button type="button" id="runAnalysisBtn" class="manual-run-btn">Find</button>
+          </div>
+          <div class="manual-body">
+            <div id="eligibleStatus" class="manual-hint">
+              Click Find to load your eligible courses for this term.
+            </div>
+            <div id="eligibleList" class="eligible-list"></div>
+            <ul id="manualDraft" class="manual-draft"></ul>
+            <input
+              id="manualPlanName"
+              type="text"
+              class="manual-plan-name"
+              placeholder="Plan name on TXST"
+              aria-label="Plan name"
+            />
+            <button type="button" id="manualSaveTxstBtn" class="manual-save-btn">
+              Save draft to TXST planner
+            </button>
+            <button type="button" id="manualResetSessionBtn" class="manual-link-btn">
+              Clear draft
+            </button>
           </div>
         </div>
         <div class="chat-section">

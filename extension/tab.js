@@ -151,6 +151,12 @@ set after each change.
 
 const $ = (id) => document.getElementById(id);
 
+function sendToBackground(message) {
+  return new Promise((resolve) => {
+    chrome.runtime.sendMessage(message, resolve);
+  });
+}
+
 let currentStudent = null;
 let currentTerm = null;
 let analysisResults = null;
@@ -158,6 +164,14 @@ let savedSchedules = [];
 let activeView = "registered";
 let conversationHistory = []; // persists for the session
 let cachedRawData = null; // holds analysis results across chat turns
+
+let bannerPlans = []; // [{ name: string, crns: string[], planNumber?: string|number|null }]
+let registeredScheduleCache = {}; // term → events array
+
+let eligibleCourses = []; // populated by analysis
+let expandedCourseKey = null; // which course row is open
+let selectedSectionByCourse = {}; // courseKey -> section index
+let manualDraft = []; // { key, subject, courseNumber, section }
 
 // ============================================================
 // INIT
@@ -207,6 +221,8 @@ let cachedRawData = null; // holds analysis results across chat turns
     currentTerm = terms[currentIdx].code;
     buildEmptyCalendar();
     loadSchedule(currentTerm);
+    loadBannerPlans(currentTerm);
+    renderManualDraft();
   });
 })();
 
@@ -220,9 +236,304 @@ $("termSelect").addEventListener("change", (e) => {
   cachedRawData = null;
   conversationHistory = []; // reset chat context when term changes
   activeView = "registered";
+  bannerPlans = [];
+  registeredScheduleCache = {};
+  eligibleCourses = [];
+  expandedCourseKey = null;
+  selectedSectionByCourse = {};
+  manualDraft = [];
+  renderManualDraft();
+  renderEligibleList();
   renderSavedList();
   buildEmptyCalendar();
   loadSchedule(currentTerm);
+  loadBannerPlans(currentTerm);
+});
+
+// ============================================================
+// ELIGIBLE COURSES PICKER
+// ============================================================
+
+function formatSectionOneLine(section, subject, courseNum) {
+  const crn = section.courseReferenceNumber || "?";
+  const sn = String(
+    section.sequenceNumber ??
+      section.sectionNumber ??
+      section.section ??
+      "?",
+  );
+  const mt = section.meetingsFaculty?.[0]?.meetingTime;
+  let timeStr = "";
+  if (mt) {
+    const days = [];
+    if (mt.monday) days.push("M");
+    if (mt.tuesday) days.push("T");
+    if (mt.wednesday) days.push("W");
+    if (mt.thursday) days.push("R");
+    if (mt.friday) days.push("F");
+    if (days.length && mt.beginTime)
+      timeStr = " · " + days.join("") + " " + mt.beginTime + "-" + mt.endTime;
+  }
+  const online = section.instructionalMethod === "INT" ? " · Online" : "";
+  const seats = section.seatsAvailable != null ? " · " + section.seatsAvailable + " seats" : "";
+  return (
+    subject.toUpperCase() +
+    " " +
+    courseNum +
+    " §" +
+    sn +
+    " CRN " +
+    crn +
+    timeStr +
+    online +
+    seats
+  );
+}
+
+function renderEligibleList() {
+  const list = $("eligibleList");
+  const status = $("eligibleStatus");
+  if (!list) return;
+
+  if (!eligibleCourses || eligibleCourses.length === 0) {
+    list.innerHTML = "";
+    if (status) status.textContent = "Click Find to load your eligible courses for this term.";
+    return;
+  }
+
+  const seenKeys = new Set();
+  const dedupedCourses = eligibleCourses.filter((course) => {
+    const k = course.subject + "-" + course.courseNumber;
+    if (seenKeys.has(k)) return false;
+    seenKeys.add(k);
+    return true;
+  });
+
+  if (status) status.textContent = dedupedCourses.length + " eligible courses — click one to pick a section.";
+  list.innerHTML = "";
+
+  dedupedCourses.forEach((course) => {
+    const key = course.subject + "-" + course.courseNumber;
+    const openCount = (course.sections || []).filter((s) => s.openSection).length;
+    const totalCount = (course.sections || []).length;
+
+    const item = document.createElement("div");
+    item.className = "eligible-course";
+
+    const header = document.createElement("div");
+    header.className = "eligible-course-header";
+    header.innerHTML =
+      '<span class="eligible-name">' +
+      course.subject + " " + course.courseNumber +
+      '<span class="eligible-req"> — ' + (course.label || "") + "</span></span>" +
+      '<span class="eligible-meta">' + openCount + "/" + totalCount + " open</span>";
+
+    header.addEventListener("click", () => {
+      expandedCourseKey = expandedCourseKey === key ? null : key;
+      renderEligibleList();
+    });
+
+    item.appendChild(header);
+
+    if (expandedCourseKey === key) {
+      const body = document.createElement("div");
+      body.className = "eligible-course-body";
+
+      const seenCrns = new Set();
+      const sections = (course.sections || []).filter((s) => {
+        const crn = String(s.courseReferenceNumber || "");
+        if (!crn || seenCrns.has(crn)) return false;
+        seenCrns.add(crn);
+        return true;
+      });
+      const currentIdx = selectedSectionByCourse[key] ?? 0;
+
+      sections.forEach((s, i) => {
+        const lbl = document.createElement("label");
+        lbl.className = "manual-result-row";
+        lbl.innerHTML =
+          '<input type="radio" name="sec-' + key + '" data-idx="' + i + '" ' +
+          (i === currentIdx ? "checked" : "") + "> " +
+          formatSectionOneLine(s, course.subject, course.courseNumber);
+        lbl.querySelector("input").addEventListener("change", () => {
+          selectedSectionByCourse[key] = i;
+        });
+        body.appendChild(lbl);
+      });
+
+      const addBtn = document.createElement("button");
+      addBtn.type = "button";
+      addBtn.className = "manual-small-btn";
+      addBtn.style.marginTop = "4px";
+      addBtn.textContent = "Add to draft";
+      addBtn.addEventListener("click", () => {
+        const idx = selectedSectionByCourse[key] ?? 0;
+        const section = sections[idx];
+        if (!section) return;
+        const crn = String(section.courseReferenceNumber || "");
+        if (!crn) { $("statusBar").textContent = "Section has no CRN."; return; }
+        if (manualDraft.some((d) => d.key === crn)) {
+          $("statusBar").textContent = "CRN " + crn + " is already in the draft.";
+          return;
+        }
+        manualDraft.push({ key: crn, subject: course.subject, courseNumber: course.courseNumber, section });
+        renderManualDraft();
+        if (activeView === "draft") { renderDraftOnCalendar(); renderSavedList(); }
+        $("statusBar").textContent = "Added " + course.subject + " " + course.courseNumber + " (CRN " + crn + ") to draft.";
+      });
+
+      body.appendChild(addBtn);
+      item.appendChild(body);
+    }
+
+    list.appendChild(item);
+  });
+}
+
+function renderManualDraft() {
+  const ul = $("manualDraft");
+  if (!ul) return;
+  if (manualDraft.length === 0) {
+    ul.innerHTML =
+      '<li class="manual-hint" style="border:none;padding:2px 0">No sections yet.</li>';
+    return;
+  }
+  ul.innerHTML = "";
+  manualDraft.forEach((row) => {
+    const li = document.createElement("li");
+    const span = document.createElement("span");
+    span.textContent = formatSectionOneLine(
+      row.section,
+      row.subject,
+      row.courseNumber,
+    );
+    const rm = document.createElement("span");
+    rm.className = "rm";
+    rm.textContent = "remove";
+    const crnKey = row.key;
+    rm.addEventListener("click", () => {
+      manualDraft = manualDraft.filter((d) => d.key !== crnKey);
+      renderManualDraft();
+      if (activeView === "draft") { renderDraftOnCalendar(); renderSavedList(); }
+    });
+    li.appendChild(span);
+    li.appendChild(rm);
+    ul.appendChild(li);
+  });
+}
+
+$("runAnalysisBtn").addEventListener("click", async () => {
+  if (!currentTerm) {
+    $("statusBar").textContent = "Select a term first.";
+    return;
+  }
+  // Reuse cached results if the chat already ran analysis for this term
+  if (analysisResults && (analysisResults.eligible || []).length > 0) {
+    eligibleCourses = analysisResults.eligible;
+    renderEligibleList();
+    return;
+  }
+  $("eligibleStatus").textContent = "Analyzing your degree audit and searching Banner…";
+  $("eligibleList").innerHTML = "";
+  analysisResults = await runAnalysisAndWait();
+  cachedRawData = analysisResults;
+  eligibleCourses = analysisResults.eligible || [];
+  renderEligibleList();
+});
+
+$("manualSaveTxstBtn").addEventListener("click", async () => {
+  const planName = ($("manualPlanName").value || "").trim();
+  if (!planName) {
+    $("statusBar").textContent = "Enter a plan name.";
+    return;
+  }
+  if (!manualDraft.length) {
+    $("statusBar").textContent = "Add at least one section to the draft.";
+    return;
+  }
+  $("statusBar").textContent = "Saving to TXST…";
+  const resp = await sendToBackground({
+    action: "saveTxstPlan",
+    term: currentTerm,
+    planName,
+    rows: manualDraft.map((d) => ({
+      section: d.section,
+      subject: d.subject,
+      courseNumber: d.courseNumber,
+    })),
+  });
+  if (!resp.ok) {
+    $("statusBar").textContent = resp.error || "Save failed.";
+    return;
+  }
+
+  // Save locally so it shows up in the BobcatPlus sidebar.
+  const courses = manualDraft.map((d) => {
+    const mt = d.section?.meetingsFaculty?.[0]?.meetingTime;
+    const days = [];
+    if (mt?.monday) days.push("Mon");
+    if (mt?.tuesday) days.push("Tue");
+    if (mt?.wednesday) days.push("Wed");
+    if (mt?.thursday) days.push("Thu");
+    if (mt?.friday) days.push("Fri");
+    const beginTime = mt?.beginTime
+      ? mt.beginTime.slice(0, 2) + ":" + mt.beginTime.slice(2)
+      : null;
+    const endTime = mt?.endTime
+      ? mt.endTime.slice(0, 2) + ":" + mt.endTime.slice(2)
+      : null;
+    return {
+      subject: d.subject,
+      courseNumber: d.courseNumber,
+      crn: d.key,
+      days: days.length ? days : null,
+      beginTime,
+      endTime,
+    };
+  });
+  const txstPlanNumber = resp.result?.bobcatPlanNumber ?? null;
+  saveSchedule(planName, courses, txstPlanNumber);
+  // Clear draft state after saving
+  manualDraft = [];
+  expandedCourseKey = null;
+  selectedSectionByCourse = {};
+  $("manualPlanName").value = "";
+  setManualVisible(false);
+  renderManualDraft();
+  $("statusBar").textContent = "Saved: " + planName + ".";
+});
+
+$("manualResetSessionBtn").addEventListener("click", () => {
+  manualDraft = [];
+  expandedCourseKey = null;
+  selectedSectionByCourse = {};
+  $("manualPlanName").value = "";
+  activeView = "registered";
+  setManualVisible(false);
+  renderManualDraft();
+  renderEligibleList();
+  renderSavedList();
+  loadSchedule(currentTerm);
+  $("statusBar").textContent = "Draft cleared.";
+});
+
+function setManualVisible(visible) {
+  const el = document.querySelector(".manual-section");
+  if (el) el.classList.toggle("visible", visible);
+}
+
+$("newDraftBtn").addEventListener("click", () => {
+  manualDraft = [];
+  expandedCourseKey = null;
+  selectedSectionByCourse = {};
+  $("manualPlanName").value = "";
+  activeView = "draft";
+  setManualVisible(true);
+  renderManualDraft();
+  renderEligibleList();
+  renderSavedList();
+  renderDraftOnCalendar();
+  $("manualPlanName").focus();
 });
 
 // ============================================================
@@ -236,9 +547,19 @@ $("viewRegistered").addEventListener("click", () => {
 });
 
 function loadSchedule(term) {
+  // Serve from cache if available
+  if (registeredScheduleCache[term]) {
+    const data = registeredScheduleCache[term];
+    renderCoursesOnCalendar(data);
+    const unique = new Set(data.map((e) => e.crn));
+    $("statusBar").textContent = unique.size + " registered courses";
+    return;
+  }
   $("statusBar").textContent = "Loading schedule...";
   chrome.runtime.sendMessage({ action: "getSchedule", term: term }, (data) => {
+    if (activeView !== "registered") return;
     if (data && data.length > 0) {
+      registeredScheduleCache[term] = data;
       renderCoursesOnCalendar(data);
       const unique = new Set(data.map((e) => e.crn));
       $("statusBar").textContent = unique.size + " registered courses";
@@ -253,6 +574,17 @@ function loadSchedule(term) {
 // SAVED SCHEDULES
 // ============================================================
 
+async function loadBannerPlans(term) {
+  const plans = await sendToBackground({ action: "getAllBannerPlans", term });
+  // Accept any valid array response, including empty (e.g. all plans deleted)
+  if (Array.isArray(plans)) {
+    bannerPlans = plans;
+    renderSavedList();
+  }
+  $("statusBar").textContent = "Ready";
+}
+
+
 function renderSavedList() {
   const list = $("savedList");
   const termSchedules = savedSchedules.filter((s) => s.term === currentTerm);
@@ -260,13 +592,23 @@ function renderSavedList() {
   $("viewRegistered").className =
     activeView === "registered" ? "view-registered active" : "view-registered";
 
-  if (termSchedules.length === 0) {
+  list.innerHTML = "";
+
+  if (activeView === "draft") {
+    const draftItem = document.createElement("div");
+    draftItem.className = "saved-item active";
+    draftItem.innerHTML =
+      '<span class="name" style="font-style:italic">New Draft</span>' +
+      '<span class="info">' + manualDraft.length + " courses</span>";
+    list.appendChild(draftItem);
+  }
+
+  if (termSchedules.length === 0 && bannerPlans.length === 0 && activeView !== "draft") {
     list.innerHTML =
       '<div class="saved-empty" id="savedEmpty">No saved schedules for this term.</div>';
     return;
   }
 
-  list.innerHTML = "";
   termSchedules.forEach((schedule) => {
     const idx = savedSchedules.indexOf(schedule);
     const item = document.createElement("div");
@@ -292,6 +634,82 @@ function renderSavedList() {
     list.appendChild(item);
   });
 
+  bannerPlans.forEach((plan, pi) => {
+    const bannerKey = "banner:" + pi;
+    const item = document.createElement("div");
+    item.className = "saved-item" + (activeView === bannerKey ? " active" : "");
+    item.innerHTML =
+      '<span class="name">' + plan.name + "</span>" +
+      '<span class="delete-btn txst-delete" title="Delete from TXST">\u00d7</span>';
+
+    // Delete button
+    item.querySelector(".txst-delete").addEventListener("click", async (e) => {
+      e.stopPropagation();
+      if (!confirm('Delete "' + plan.name + '" from TXST and Bobcat Plus?')) return;
+      $("statusBar").textContent = "Deleting " + plan.name + "\u2026";
+      const resp = await sendToBackground({
+        action: "deleteTxstPlan",
+        term: currentTerm,
+        planIndex: plan.txstPlanIndex,
+      });
+      if (!resp.ok) {
+        $("statusBar").textContent = "Delete failed: " + (resp.error || "unknown error");
+        return;
+      }
+      // Immediately remove from the local list and re-render
+      bannerPlans.splice(pi, 1);
+      if (activeView === bannerKey) {
+        activeView = "registered";
+        loadSchedule(currentTerm);
+      }
+      renderSavedList();
+      $("statusBar").textContent = plan.name + " deleted.";
+      // Re-fetch after a short delay so TXST finishes committing the delete
+      // before we hit their API again (avoids a session race condition)
+      setTimeout(() => loadBannerPlans(currentTerm), 1500);
+    });
+
+    item.addEventListener("click", async (e) => {
+      if (e.target.classList.contains("delete-btn")) return;
+      activeView = bannerKey;
+      renderSavedList();
+
+      // If we already have events cached, render immediately
+      if (plan.events && plan.events.length > 0) {
+        renderCoursesOnCalendar(plan.events);
+        $("statusBar").textContent = "Viewing: " + plan.name;
+        return;
+      }
+
+      // Lazy-load: fetch meeting times for this plan's CRNs via section search
+      $("statusBar").textContent = "Loading " + plan.name + "\u2026";
+      buildEmptyCalendar();
+
+      const events = await sendToBackground({
+        action: "fetchPlanCalendar",
+        term: currentTerm,
+        planCourses: plan.planCourses || [],
+      });
+
+      // Cache on the plan object so subsequent clicks are instant
+      plan.events = events || [];
+
+      if (!plan.events.length) {
+        buildEmptyCalendar();
+        $("statusBar").textContent = plan.name + ": no scheduled meeting times found.";
+        return;
+      }
+
+      // Only render if user hasn't navigated away while loading
+      if (activeView === bannerKey) {
+        renderCoursesOnCalendar(plan.events);
+        $("statusBar").textContent = "Viewing: " + plan.name;
+      }
+    });
+
+    list.appendChild(item);
+  });
+
   list.querySelectorAll(".delete-btn").forEach((btn) => {
     btn.addEventListener("click", (e) => {
       e.stopPropagation();
@@ -307,8 +725,49 @@ function renderSavedList() {
   });
 }
 
-function saveSchedule(name, courses) {
-  const schedule = { name, term: currentTerm, courses, created: Date.now() };
+function renderDraftOnCalendar() {
+  buildEmptyCalendar();
+  const dayMap = { Mon: 0, Tue: 1, Wed: 2, Thu: 3, Fri: 4 };
+  for (const row of manualDraft) {
+    const mt = row.section?.meetingsFaculty?.[0]?.meetingTime;
+    if (!mt) continue;
+    const days = [];
+    if (mt.monday) days.push("Mon");
+    if (mt.tuesday) days.push("Tue");
+    if (mt.wednesday) days.push("Wed");
+    if (mt.thursday) days.push("Thu");
+    if (mt.friday) days.push("Fri");
+    if (!days.length || !mt.beginTime || !mt.endTime) continue;
+    const beginTime = mt.beginTime.slice(0, 2) + ":" + mt.beginTime.slice(2);
+    const endTime = mt.endTime.slice(0, 2) + ":" + mt.endTime.slice(2);
+    const [bh, bm] = beginTime.split(":").map(Number);
+    const [eh, em] = endTime.split(":").map(Number);
+    const startOffset = (bm / 60) * 40;
+    const height = (eh + em / 60 - (bh + bm / 60)) * 40;
+    const timeStr = formatTime24to12(bh, bm) + " - " + formatTime24to12(eh, em);
+    for (const day of days) {
+      const dayIdx = dayMap[day];
+      if (dayIdx === undefined) continue;
+      const cell = $("cell-" + dayIdx + "-" + bh);
+      if (!cell) continue;
+      const block = document.createElement("div");
+      block.className = "course-block";
+      block.style.top = startOffset + "px";
+      block.style.height = height + "px";
+      block.innerHTML =
+        '<div class="course-title">' + row.subject + " " + row.courseNumber + "</div>" +
+        '<div class="course-time">' + timeStr + "</div>" +
+        '<div class="course-time">CRN: ' + row.key + "</div>";
+      cell.appendChild(block);
+    }
+  }
+  $("statusBar").textContent = manualDraft.length
+    ? "Draft: " + manualDraft.length + " course(s) — add more or save."
+    : "Draft is empty — pick courses from the list below.";
+}
+
+function saveSchedule(name, courses, txstPlanNumber) {
+  const schedule = { name, term: currentTerm, courses, created: Date.now(), txstPlanNumber: txstPlanNumber ?? null };
   savedSchedules.push(schedule);
   chrome.storage.local.set({ savedSchedules });
   activeView = savedSchedules.length - 1;
@@ -745,7 +1204,10 @@ function runAnalysisAndWait() {
     };
 
     chrome.runtime.onMessage.addListener(listener);
-    chrome.runtime.sendMessage({ action: "runAnalysis" });
+    chrome.runtime.sendMessage({
+      action: "runAnalysis",
+      term: currentTerm,
+    });
   });
 }
 
