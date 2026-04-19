@@ -998,7 +998,10 @@ async function runAnalysis(sendUpdate, termCodeOverride) {
   const notOffered = [];
 
   // Search courses sequentially — Banner session state cannot handle parallel searches
-  sendUpdate({ type: "status", message: "Searching " + needed.length + " courses..." });
+  sendUpdate({
+    type: "status",
+    message: "Searching " + needed.length + " courses...",
+  });
   for (const course of needed) {
     try {
       const sections = await searchCourse(
@@ -1022,7 +1025,10 @@ async function runAnalysis(sendUpdate, termCodeOverride) {
   const descCache = {};
   sendUpdate({
     type: "status",
-    message: "Checking prerequisites for " + coursesWithSections.length + " courses...",
+    message:
+      "Checking prerequisites for " +
+      coursesWithSections.length +
+      " courses...",
   });
   await Promise.all(
     coursesWithSections.map(async (course) => {

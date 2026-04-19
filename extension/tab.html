@@ -52,7 +52,6 @@
           Degree Audit
         </a>
       </nav>
-      <!-- Overview -->
       <div class="sidebar-overview">
         <div class="sidebar-overview-header" id="overviewToggle">
           <span>Overview</span>
@@ -64,7 +63,6 @@
           </div>
         </div>
       </div>
-
       <div class="sidebar-footer">
         <div class="sidebar-student" id="sidebarStudent"></div>
       </div>
@@ -140,71 +138,52 @@
       </div>
 
       <div class="resize-handle" id="resizeHandle"></div>
+
+      <!-- Right panel -->
       <div class="right-panel" id="rightPanel">
-        <!-- Saved schedules -->
-        <div class="saved-section">
-          <div class="saved-header">
-            <span>Schedules</span>
-            <button type="button" id="newDraftBtn" class="manual-run-btn">
-              +
-            </button>
-          </div>
-          <div class="view-registered active" id="viewRegistered">
-            Current Registered Schedule
-          </div>
+        <!-- ── Schedules header (collapsible) ── -->
+        <div class="schedules-header" id="schedulesToggle">
+          <span class="schedules-chevron" id="schedulesChevron">›</span>
+          <span class="schedules-title">Schedules</span>
+        </div>
+        <div class="schedules-body" id="schedulesBody">
           <div class="saved-list" id="savedList">
-            <div class="saved-empty" id="savedEmpty">
-              No saved schedules for this term.
-            </div>
+            <div class="saved-empty">No saved schedules for this term.</div>
           </div>
         </div>
 
-        <!-- Manual schedule builder (Max's feature — hidden until + is clicked) -->
-        <div class="manual-section" id="manualSection">
-          <div class="manual-header">
-            <span>Eligible Courses</span>
-            <button type="button" id="runAnalysisBtn" class="manual-run-btn">
-              Find
-            </button>
+        <!-- ── Build / AI tab switcher ── -->
+        <div class="mode-tabs">
+          <button class="mode-tab active" id="tabBuild">Build</button>
+          <button class="mode-tab" id="tabAI">AI</button>
+        </div>
+
+        <!-- ── BUILD PANEL ── -->
+        <div class="build-panel" id="buildPanel" style="display: flex">
+          <div class="eligible-status" id="eligibleStatus">
+            Loading your eligible courses…
           </div>
-          <div class="manual-body">
-            <div id="eligibleStatus" class="manual-hint">
-              Click Find to load your eligible courses for this term.
-            </div>
-            <div id="eligibleList" class="eligible-list"></div>
-            <ul id="manualDraft" class="manual-draft"></ul>
-            <input
-              id="manualPlanName"
-              type="text"
-              class="manual-plan-name"
-              placeholder="Plan name on TXST"
-              aria-label="Plan name"
-            />
+          <div class="eligible-list" id="eligibleList"></div>
+          <!-- Save button — always at bottom, dimmed until courses added -->
+          <div class="txst-save-area" id="txstSaveArea">
             <button
               type="button"
-              id="manualSaveTxstBtn"
-              class="manual-save-btn"
+              id="saveTxstBtn"
+              class="txst-save-btn txst-save-btn--dim"
             >
-              Save draft to TXST planner
-            </button>
-            <button
-              type="button"
-              id="manualResetSessionBtn"
-              class="manual-link-btn"
-            >
-              Clear draft
+              Save Schedule to TXST
             </button>
           </div>
         </div>
 
-        <!-- Chat -->
-        <div class="chat-section">
+        <!-- ── AI PANEL ── -->
+        <div class="ai-panel" id="aiPanel" style="display: none">
           <div class="chat-header">Schedule Planner</div>
           <div class="chat-messages" id="chatMessages">
             <div class="chat-message system">
               <div class="sender">System</div>
-              Select a future semester and describe your preferences to build a
-              schedule.
+              Lock courses in Build mode first, then describe your preferences
+              here and the AI will fill the rest.
             </div>
           </div>
           <div class="chat-input-area">
@@ -232,7 +211,9 @@
           </div>
         </div>
       </div>
+      <!-- /right-panel -->
     </div>
+    <!-- /main -->
 
     <div class="status-bar" id="statusBar">Ready</div>
     <script src="tab.js"></script>
