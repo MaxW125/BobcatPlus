@@ -1076,6 +1076,15 @@ async function loadSchedule(term) {
 
 function addToWorkingSchedule(entry) {
   const crn = String(entry.crn);
+  // If replacing a section of the same course (different CRN), transfer the lock
+  // so "Replace on calendar" doesn't silently drop a lock the user set.
+  const displaced = workingCourses.find(
+    (c) => c.subject === entry.subject && c.courseNumber === entry.courseNumber && String(c.crn) !== crn
+  );
+  if (displaced && lockedCrns.has(String(displaced.crn))) {
+    lockedCrns.delete(String(displaced.crn));
+    lockedCrns.add(crn);
+  }
   workingCourses = workingCourses.filter((c) => String(c.crn) !== crn);
   workingCourses.push({ ...entry, crn });
   renderCalendarFromWorkingCourses();
