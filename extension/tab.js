@@ -1262,6 +1262,8 @@ function renderCalendarFromWorkingCourses() {
 
   // Show or clear conflict warning after every calendar render
   updateConflictStatus();
+  // Keep AI toolbar lock count in sync
+  renderAIToolbar();
 }
 
 // ============================================================
@@ -1689,6 +1691,38 @@ function renderSavedScheduleOnCalendar(schedule) {
   renderCalendarFromWorkingCourses(); updateWeekHours(workingCourses); updateSaveBtn();
   $("statusBar").textContent = "Viewing: " + schedule.name;
 }
+
+// ============================================================
+// AI TOOLBAR — lock-all shortcut
+// ============================================================
+
+function renderAIToolbar() {
+  const hintEl = $("aiToolbarHint");
+  const btn = $("aiLockAllBtn");
+  if (!hintEl || !btn) return;
+
+  const total = workingCourses.length;
+  const locked = workingCourses.filter((c) => lockedCrns.has(String(c.crn))).length;
+  const allLocked = total > 0 && locked === total;
+
+  if (total === 0) {
+    hintEl.textContent = "Add courses in Build mode so the AI can see them";
+    btn.disabled = true;
+  } else if (allLocked) {
+    hintEl.textContent = "All " + total + " course" + (total !== 1 ? "s" : "") + " locked — AI can see them";
+    btn.disabled = true;
+  } else {
+    const unlocked = total - locked;
+    hintEl.textContent = locked > 0 ? locked + "/" + total + " locked" : unlocked + " unlocked course" + (unlocked !== 1 ? "s" : "") + " — AI won't see them";
+    btn.disabled = false;
+  }
+}
+
+$("aiLockAllBtn")?.addEventListener("click", () => {
+  for (const c of workingCourses) lockedCrns.add(String(c.crn));
+  renderCalendarFromWorkingCourses();
+  addMessage("system", lockedCrns.size + " course" + (lockedCrns.size !== 1 ? "s" : "") + " locked. The AI can now see your full schedule.");
+});
 
 // ============================================================
 // CHAT (AI mode)
