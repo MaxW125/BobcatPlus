@@ -1566,8 +1566,49 @@ function withSessionLock(fn) {
   return task;
 }
 
+// ============================================================
+// chrome.storage.local cache helpers
+// TTLs: course sections 1h, prerequisites 24h, descriptions 7d, terms 24h
+// ============================================================
+const CACHE_TTL = {
+  course: 60 * 60 * 1000,           // 1 hour  — seats change but not by the minute
+  prereq: 24 * 60 * 60 * 1000,      // 24 hours — fixed once schedule publishes
+  desc:   7  * 24 * 60 * 60 * 1000, // 7 days  — truly static
+  terms:  24 * 60 * 60 * 1000,      // 24 hours
+};
+
+async function cacheGet(key, ttl) {
+  try {
+    const result = await chrome.storage.local.get(key);
+    const entry = result[key];
+    if (entry && Date.now() - entry.ts < ttl) return entry.data;
+  } catch (e) {}
+  return null;
+}
+
+async function cacheSet(key, data) {
+  try {
+    await chrome.storage.local.set({ [key]: { data, ts: Date.now() } });
+  } catch (e) {}
+}
+
+// Returns the timestamp (ms) of a cached entry, or null if missing/expired.
+async function cacheAge(key, ttl) {
+  try {
+    const result = await chrome.storage.local.get(key);
+    const entry = result[key];
+    if (entry && Date.now() - entry.ts < ttl) return entry.ts;
+  } catch (e) {}
+  return null;
+}
+
 // --- Step 4: Search for sections of a single course ---
-async function searchCourse(subject, courseNumber, term) {
+async function searchCourse(subject, courseNumber, term, { forceRefresh = false } = {}) {
+  const key = `course|${term}|${subject}|${courseNumber}`;
+  if (!forceRefresh) {
+    const cached = await cacheGet(key, CACHE_TTL.course);
+    if (cached) return cached;
+  }
   return withSessionLock(async () => {
     await fetch(
       "https://reg-prod.ec.txstate.edu/StudentRegistrationSsb/ssb/classSearch/resetDataForm",
@@ -1608,6 +1649,8 @@ async function searchCourse(subject, courseNumber, term) {
     );
     const result = await response.json();
     if (result.success && result.data && result.data.length > 0) {
+      const key = `course|${term}|${subject}|${courseNumber}`;
+      await cacheSet(key, result.data);
       return result.data;
     }
     return null;
@@ -1659,14 +1702,19 @@ function checkPrereqGroup(group, completed, inProgress) {
 }
 
 async function checkPrereqs(crn, term, completed, inProgress) {
-  const response = await fetch(
-    "https://reg-prod.ec.txstate.edu/StudentRegistrationSsb/ssb/searchResults/getSectionPrerequisites?term=" +
-      term +
-      "&courseReferenceNumber=" +
-      crn,
-    { credentials: "include" },
-  );
-  const html = await response.text();
+  const prereqKey = `prereq|${term}|${crn}`;
+  let html = await cacheGet(prereqKey, CACHE_TTL.prereq);
+  if (!html) {
+    const response = await fetch(
+      "https://reg-prod.ec.txstate.edu/StudentRegistrationSsb/ssb/searchResults/getSectionPrerequisites?term=" +
+        term +
+        "&courseReferenceNumber=" +
+        crn,
+      { credentials: "include" },
+    );
+    html = await response.text();
+    await cacheSet(prereqKey, html);
+  }
   const orGroups = html.split(/\)\s*or\s*\(/i);
 
   if (orGroups.length > 1) {
@@ -1697,6 +1745,9 @@ async function checkPrereqs(crn, term, completed, inProgress) {
 
 // --- Fetch course description for a section ---
 async function getCourseDescription(crn, term) {
+  const descKey = `desc|${term}|${crn}`;
+  const cached = await cacheGet(descKey, CACHE_TTL.desc);
+  if (cached !== null) return cached;
   try {
     const response = await fetch(
       "https://reg-prod.ec.txstate.edu/StudentRegistrationSsb/ssb/searchResults/getCourseDescription?term=" +
@@ -1706,10 +1757,12 @@ async function getCourseDescription(crn, term) {
       { credentials: "include" },
     );
     const rawHtml = await response.text();
-    return rawHtml
+    const text = rawHtml
       .replace(/<[^>]*>/g, "")
       .replace(/<!--[\s\S]*?-->/g, "")
       .trim();
+    await cacheSet(descKey, text);
+    return text;
   } catch (e) {
     return "";
   }
@@ -1718,7 +1771,7 @@ async function getCourseDescription(crn, term) {
 // --- Main analysis function ---
 // isCurrent is an optional predicate — when it returns false the caller has
 // started a newer analysis, so this run bails early to stop spamming the queue.
-async function runAnalysis(sendUpdate, termCodeOverride, isCurrent) {
+async function runAnalysis(sendUpdate, termCodeOverride, isCurrent, { forceRefresh = false } = {}) {
   const current = typeof isCurrent === "function" ? isCurrent : () => true;
   const bail = () => !current();
 
@@ -1772,18 +1825,24 @@ async function runAnalysis(sendUpdate, termCodeOverride, isCurrent) {
   const eligible = [];
   const blocked = [];
   const notOffered = [];
+  let oldestCacheTs = null; // track when course data was last fetched from Banner
 
   // Search courses sequentially — Banner session state cannot handle parallel searches
   sendUpdate({ type: "status", message: "Searching " + needed.length + " courses..." });
   for (const course of needed) {
     if (bail()) return;
     try {
+      const cacheKey = `course|${term.code}|${course.subject}|${course.courseNumber}`;
       const sections = await searchCourse(
         course.subject,
         course.courseNumber,
         term.code,
+        { forceRefresh },
       );
       if (bail()) return;
+      // Track oldest cache timestamp so UI can show "last updated X min ago"
+      const ts = await cacheAge(cacheKey, CACHE_TTL.course);
+      if (ts && (oldestCacheTs === null || ts < oldestCacheTs)) oldestCacheTs = ts;
       if (sections) {
         course.crn = sections[0].courseReferenceNumber;
         course.sections = sections;
@@ -1843,7 +1902,7 @@ async function runAnalysis(sendUpdate, termCodeOverride, isCurrent) {
   );
 
   if (bail()) return;
-  sendUpdate({ type: "done", data: { eligible, blocked, notOffered, needed } });
+  sendUpdate({ type: "done", data: { eligible, blocked, notOffered, needed, cacheTs: oldestCacheTs } });
 }
 
 // --- Get available terms ---
@@ -2429,7 +2488,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     runAnalysis((update) => {
       if (!isCurrent()) return;
       chrome.runtime.sendMessage({ ...update, _term: analysisTerm }).catch(() => {});
-    }, analysisTerm, isCurrent);
+    }, analysisTerm, isCurrent, { forceRefresh: !!message.forceRefresh });
     sendResponse({ started: true });
   }
 

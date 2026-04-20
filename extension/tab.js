@@ -841,15 +841,28 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 });
 
-async function autoLoadEligibleCourses() {
-  if (analysisResults && (analysisResults.eligible || []).length > 0) { eligibleCourses = analysisResults.eligible; renderEligibleList(); return; }
+async function autoLoadEligibleCourses({ forceRefresh = false } = {}) {
+  if (!forceRefresh && analysisResults && (analysisResults.eligible || []).length > 0) { eligibleCourses = analysisResults.eligible; renderEligibleList(); return; }
   const statusEl = $("eligibleStatus");
   if (statusEl) statusEl.textContent = "Loading your eligible courses…";
-  analysisResults = await runAnalysisAndWait();
+  analysisResults = await runAnalysisAndWait({ forceRefresh });
   if (analysisResults._skippedStaleTerm) return;
   cachedRawData = analysisResults;
   eligibleCourses = analysisResults.eligible || [];
   renderEligibleList();
+  renderCacheAge(analysisResults.cacheTs);
+}
+
+function renderCacheAge(cacheTs) {
+  const el = $("eligibleCacheAge");
+  if (!el) return;
+  if (!cacheTs) { el.textContent = ""; return; }
+  const ageMs = Date.now() - cacheTs;
+  const mins = Math.floor(ageMs / 60000);
+  const label = mins < 1 ? "just now" : mins < 60 ? mins + "m ago" : Math.floor(mins / 60) + "h ago";
+  el.innerHTML = "Seat data from cache · " + label + " &nbsp;<button id='refreshEligibleBtn' style='font-size:11px;padding:1px 6px;cursor:pointer;'>Refresh</button>";
+  const btn = document.getElementById("refreshEligibleBtn");
+  if (btn) btn.addEventListener("click", () => { analysisResults = null; autoLoadEligibleCourses({ forceRefresh: true }); });
 }
 
 // ============================================================
@@ -1751,7 +1764,7 @@ function getLockedForLLM() {
 // ANALYSIS RUNNER
 // ============================================================
 
-function runAnalysisAndWait() {
+function runAnalysisAndWait({ forceRefresh = false } = {}) {
   const mySeq = ++eligibleAnalysisSeq;
   const termAtStart = currentTerm;
   return new Promise((resolve) => {
@@ -1762,10 +1775,16 @@ function runAnalysisAndWait() {
       if (message._term !== undefined && message._term !== termAtStart) { stale(); return; }
       if (message.type === "status") $("statusBar").textContent = message.message;
       if (message.type === "eligible") results.eligible.push(message.data);
-      if (message.type === "done") { chrome.runtime.onMessage.removeListener(listener); results.notOffered = message.data.notOffered; results.needed = message.data.needed; resolve(results); }
+      if (message.type === "done") {
+        chrome.runtime.onMessage.removeListener(listener);
+        results.notOffered = message.data.notOffered;
+        results.needed = message.data.needed;
+        results.cacheTs = message.data.cacheTs || null;
+        resolve(results);
+      }
     };
     chrome.runtime.onMessage.addListener(listener);
-    chrome.runtime.sendMessage({ action: "runAnalysis", term: currentTerm });
+    chrome.runtime.sendMessage({ action: "runAnalysis", term: currentTerm, forceRefresh });
   });
 }
 
