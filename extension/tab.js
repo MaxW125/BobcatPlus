@@ -151,6 +151,7 @@ let scheduleFetchGeneration = 0;
 function bumpScheduleFetchGeneration() { return ++scheduleFetchGeneration; }
 let scheduleViewGeneration = 0;
 function bumpScheduleViewGeneration() { return ++scheduleViewGeneration; }
+let termChangeGeneration = 0;
 
 // ── UI MODE ───────────────────────────────────────────────
 let panelMode = "build";
@@ -253,6 +254,7 @@ function registerCourseMeta(crn, meta) { if (crn && meta) calendarCourseMetaByCr
 // ============================================================
 
 $("termSelect").addEventListener("change", async (e) => {
+  const gen = ++termChangeGeneration;
   currentTerm = e.target.value;
   analysisResults = null; cachedRawData = null; cachedRegisteredCourses = []; cachedRegisteredTerm = null;
   conversationHistory = []; bannerPlans = []; registeredScheduleCache = {};
@@ -262,8 +264,18 @@ $("termSelect").addEventListener("change", async (e) => {
   if (newPlanClickTimer) { clearTimeout(newPlanClickTimer); newPlanClickTimer = null; }
   buildEmptyCalendar();
   setPanelMode("build");
-  if (await checkAuth()) { await loadSchedule(currentTerm); await loadBannerPlans(currentTerm); autoLoadEligibleCourses(); }
-  else { $("statusBar").textContent = "Use Import Schedule to sign in and load your registration."; await loadBannerPlans(currentTerm); }
+  const ok = await checkAuth();
+  if (gen !== termChangeGeneration) return;
+  if (ok) {
+    await loadSchedule(currentTerm);
+    if (gen !== termChangeGeneration) return;
+    await loadBannerPlans(currentTerm);
+    if (gen !== termChangeGeneration) return;
+    autoLoadEligibleCourses();
+  } else {
+    $("statusBar").textContent = "Use Import Schedule to sign in and load your registration.";
+    await loadBannerPlans(currentTerm);
+  }
 });
 
 // ============================================================
@@ -1479,6 +1491,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
 async function loadBannerPlans(term) {
   const plans = await sendToBackground({ action: "getAllBannerPlans", term });
+  if (currentTerm !== term) return;
   if (Array.isArray(plans)) { bannerPlans = plans; renderSavedList(); }
   $("statusBar").textContent = "Ready";
 }
@@ -1496,8 +1509,8 @@ function renderSavedList() {
   regItem.addEventListener("click", () => {
     bumpScheduleViewGeneration(); activeScheduleKey = "registered";
     const cached = registeredScheduleCache[currentTerm];
-    if (cached && cached.length) { const { registered, locks } = buildRegisteredCoursesFromEvents(cached); lockedCrns = locks; workingCourses = registered; }
-    else { workingCourses = workingCourses.filter((c) => c.source === "registered"); lockedCrns = new Set(workingCourses.map((c) => String(c.crn))); }
+    if (cached && cached.length) { const { registered, locks } = buildRegisteredCoursesFromEvents(cached); lockedCrns = locks; workingCourses = registered; updateWeekHours(cached); }
+    else { workingCourses = workingCourses.filter((c) => c.source === "registered"); lockedCrns = new Set(workingCourses.map((c) => String(c.crn))); updateWeekHours(workingCourses); }
     renderCalendarFromWorkingCourses(); renderSavedList(); $("statusBar").textContent = "Viewing registered schedule"; updateSaveBtn();
   });
   list.appendChild(regItem);
@@ -1594,7 +1607,7 @@ function renderSavedScheduleOnCalendar(schedule) {
   const fromSaved = (schedule.courses || []).map((c) => ({ ...c, crn: String(c.crn ?? ""), source: "saved" }));
   lockedCrns = new Set();
   workingCourses = [...workingCourses.filter((c) => c.source === "registered"), ...fromSaved.filter((c) => !workingCourses.some((w) => String(w.crn) === c.crn))];
-  renderCalendarFromWorkingCourses(); updateSaveBtn();
+  renderCalendarFromWorkingCourses(); updateWeekHours(workingCourses); updateSaveBtn();
   $("statusBar").textContent = "Viewing: " + schedule.name;
 }
 

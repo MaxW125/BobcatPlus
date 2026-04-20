@@ -2380,12 +2380,17 @@ function openLoginPopup(sendResponse) {
   );
 }
 
+let activeAnalysisTerm = null;
+
 // --- Listen for messages from popup and full tab ---
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.action === "runAnalysis") {
     const analysisTerm = message.term || null;
+    if (activeAnalysisTerm === analysisTerm) { sendResponse({ started: false }); return; }
+    activeAnalysisTerm = analysisTerm;
     runAnalysis((update) => {
-      chrome.runtime.sendMessage({ ...update, _term: analysisTerm });
+      chrome.runtime.sendMessage({ ...update, _term: analysisTerm }).catch(() => {});
+      if (update.type === "done") activeAnalysisTerm = null;
     }, analysisTerm);
     sendResponse({ started: true });
   }
