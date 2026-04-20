@@ -6,97 +6,108 @@
     <link rel="stylesheet" href="css/tab.css" />
   </head>
   <body>
-    <!-- Sidebar overlay + drawer -->
+
+    <!-- Sidebar -->
     <div class="sidebar-overlay" id="sidebarOverlay"></div>
     <div class="sidebar" id="sidebar">
       <div class="sidebar-header">
         <div class="header-brand">
-          <img src="images/txst-logo-b.jpg" alt="TXST" class="header-logo" />
+          <img src="images/txst-star-gold.png" alt="TXST" class="header-logo" />
           <span>Bobcat Plus</span>
         </div>
         <button class="sidebar-close" id="sidebarClose">✕</button>
       </div>
       <nav class="sidebar-nav">
         <a class="sidebar-link" id="navRegister" href="#">
-          <svg
-            width="16"
-            height="16"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2"
-          >
-            <path
-              d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"
-            />
-            <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
-          </svg>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
           Register for Classes
         </a>
         <a class="sidebar-link" id="navAudit" href="#">
-          <svg
-            width="16"
-            height="16"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2"
-          >
-            <path
-              d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"
-            />
-            <polyline points="14 2 14 8 20 8" />
-            <line x1="16" y1="13" x2="8" y2="13" />
-            <line x1="16" y1="17" x2="8" y2="17" />
-          </svg>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
           Degree Audit
         </a>
       </nav>
-      <!-- Overview -->
       <div class="sidebar-overview">
         <div class="sidebar-overview-header" id="overviewToggle">
           <span>Overview</span>
           <span class="overview-chevron" id="overviewChevron">▾</span>
         </div>
         <div class="sidebar-overview-body" id="overviewPanel">
-          <div style="color: var(--text3); font-size: 11px; padding: 4px 0">
-            Load a schedule to see overview
-          </div>
+          <div style="color:var(--text3);font-size:11px;padding:4px 0">Load a schedule to see overview</div>
         </div>
       </div>
-
       <div class="sidebar-footer">
         <div class="sidebar-student" id="sidebarStudent"></div>
       </div>
     </div>
 
-    <!-- Course detail modal -->
+    <!-- Course detail modal (Simone) -->
     <div class="modal-overlay" id="modalOverlay"></div>
     <div class="modal" id="courseModal">
-      <div class="modal-header">
-        <div>
-          <div class="modal-title" id="modalTitle"></div>
-          <div class="modal-sub" id="modalSub"></div>
-        </div>
-        <button class="modal-close" id="modalClose">✕</button>
+      <button class="modal-close" id="modalClose">✕</button>
+      <div class="modal-profile-row">
+        <img class="modal-avatar" src="images/generic-profile.png" alt="Professor" />
+        <div class="modal-title" id="modalTitle"></div>
       </div>
-      <div class="modal-body" id="modalBody"></div>
+      <div class="modal-sub" id="modalSub"></div>
+      <div class="modal-body" id="modalBody">
+        <div class="modal-field-group">
+          <div class="modal-field"><span class="modal-label">Section</span><span class="modal-value" id="modalSection">—</span></div>
+          <div class="modal-field"><span class="modal-label">CRN</span><span class="modal-value" id="modalCRN">—</span></div>
+        </div>
+        <div class="modal-divider"></div>
+        <div class="modal-field-group">
+          <div class="modal-field"><span class="modal-label">Professor</span><span class="modal-value" id="modalProf">—</span></div>
+          <div class="modal-field">
+            <span class="modal-label">Email</span>
+            <div class="modal-value modal-email-value">
+              <span id="modalProfEmail">—</span>
+              <button
+                type="button"
+                class="modal-copy-email"
+                id="modalCopyEmail"
+                hidden
+                title="Copy to clipboard"
+                aria-label="Copy to clipboard"
+              >
+                <svg
+                  width="14"
+                  height="14"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  aria-hidden="true"
+                >
+                  <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+                  <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+                </svg>
+              </button>
+            </div>
+          </div>
+        </div>
+        <div class="modal-divider"></div>
+        <div class="modal-field-group">
+          <div class="modal-field"><span class="modal-label">Meeting Time</span><span class="modal-value" id="modalTime">—</span></div>
+          <div class="modal-field"><span class="modal-label">Location</span><span class="modal-value" id="modalLocation">—</span></div>
+          <div class="modal-field"><span class="modal-label">Instructional Method</span><span class="modal-value" id="modalMethod">—</span></div>
+        </div>
+      </div>
       <div class="modal-footer">
-        <button class="modal-btn primary" id="modalEmail">
-          ✉ Email Instructor
-        </button>
+        <button class="modal-btn rmp" id="modalRMP">Rate My Professor</button>
+        <button class="modal-btn primary" id="modalEmail">Email Professor</button>
         <div class="color-picker-row" id="colorPickerRow"></div>
       </div>
     </div>
 
     <!-- Top bar -->
     <div class="top-bar">
-      <div style="display: flex; align-items: center; gap: 12px">
-        <button class="hamburger" id="hamburgerBtn">
-          <span></span><span></span><span></span>
-        </button>
+      <div style="display:flex;align-items:center;gap:12px;">
+        <button class="hamburger" id="hamburgerBtn"><span></span><span></span><span></span></button>
         <div class="header-brand">
-          <img src="images/txst-logo-b.jpg" alt="TXST" class="header-logo" />
+          <img src="images/txst-star-gold.png" alt="TXST" class="header-logo" />
           <h1>Bobcat Plus</h1>
         </div>
       </div>
@@ -111,27 +122,10 @@
       <div class="calendar-panel">
         <div class="week-header">
           <div class="week-title">Week at a Glance</div>
-          <div style="display: flex; align-items: center; gap: 10px">
+          <div style="display:flex;align-items:center;gap:10px;">
             <div class="week-hours" id="weekHours"></div>
-            <button
-              class="import-btn"
-              id="importBtn"
-              title="Import your schedule from TXST"
-            >
-              <svg
-                width="13"
-                height="13"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2.5"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-              >
-                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                <polyline points="7 10 12 15 17 10" />
-                <line x1="12" y1="15" x2="12" y2="3" />
-              </svg>
+            <button class="import-btn" id="importBtn" title="Import your schedule from TXST">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
               Import Schedule
             </button>
           </div>
@@ -140,101 +134,64 @@
       </div>
 
       <div class="resize-handle" id="resizeHandle"></div>
+
+      <!-- Right panel -->
       <div class="right-panel" id="rightPanel">
-        <!-- Saved schedules -->
-        <div class="saved-section">
-          <div class="saved-header">
-            <span>Schedules</span>
-            <button type="button" id="newDraftBtn" class="manual-run-btn">
-              +
-            </button>
-          </div>
-          <div class="view-registered active" id="viewRegistered">
-            Current Registered Schedule
-          </div>
+
+        <!-- Schedules collapsible -->
+        <div class="schedules-header" id="schedulesToggle">
+          <span class="schedules-chevron" id="schedulesChevron">›</span>
+          <span class="schedules-title">Schedules</span>
+        </div>
+        <div class="schedules-body" id="schedulesBody">
           <div class="saved-list" id="savedList">
-            <div class="saved-empty" id="savedEmpty">
-              No saved schedules for this term.
-            </div>
+            <div class="saved-empty">No saved schedules for this term.</div>
           </div>
         </div>
 
-        <!-- Manual schedule builder (Max's feature — hidden until + is clicked) -->
-        <div class="manual-section" id="manualSection">
-          <div class="manual-header">
-            <span>Eligible Courses</span>
-            <button type="button" id="runAnalysisBtn" class="manual-run-btn">
-              Find
-            </button>
-          </div>
-          <div class="manual-body">
-            <div id="eligibleStatus" class="manual-hint">
-              Click Find to load your eligible courses for this term.
-            </div>
-            <div id="eligibleList" class="eligible-list"></div>
-            <ul id="manualDraft" class="manual-draft"></ul>
-            <input
-              id="manualPlanName"
-              type="text"
-              class="manual-plan-name"
-              placeholder="Plan name on TXST"
-              aria-label="Plan name"
-            />
-            <button
-              type="button"
-              id="manualSaveTxstBtn"
-              class="manual-save-btn"
-            >
-              Save draft to TXST planner
-            </button>
-            <button
-              type="button"
-              id="manualResetSessionBtn"
-              class="manual-link-btn"
-            >
-              Clear draft
+        <!-- Build / AI tabs -->
+        <div class="mode-tabs">
+          <button class="mode-tab active" id="tabBuild">Build</button>
+          <button class="mode-tab" id="tabAI">AI</button>
+        </div>
+
+        <!-- BUILD PANEL -->
+        <div class="build-panel" id="buildPanel" style="display:flex;">
+          <div class="eligible-status" id="eligibleStatus">Loading your eligible courses…</div>
+          <div id="eligibleCacheAge" class="eligible-cache-row"></div>
+          <div class="eligible-list" id="eligibleList"></div>
+          <div class="txst-save-area" id="txstSaveArea">
+            <button type="button" id="saveTxstBtn" class="txst-save-btn txst-save-btn--dim">
+              Save Schedule to TXST
             </button>
           </div>
         </div>
 
-        <!-- Chat -->
-        <div class="chat-section">
+        <!-- AI PANEL -->
+        <div class="ai-panel" id="aiPanel" style="display:none;">
           <div class="chat-header">Schedule Planner</div>
           <div class="chat-messages" id="chatMessages">
             <div class="chat-message system">
               <div class="sender">System</div>
-              Select a future semester and describe your preferences to build a
-              schedule.
+              Lock courses in Build mode first, then describe your preferences here and the AI will fill the rest.
             </div>
           </div>
           <div class="chat-input-area">
-            <textarea
-              class="chat-input"
-              id="chatInput"
-              rows="2"
-              placeholder="e.g. I don't like early mornings, keep Fridays light..."
-            ></textarea>
+            <textarea class="chat-input" id="chatInput" rows="2" placeholder="e.g. I don't like early mornings, keep Fridays light..."></textarea>
             <button class="chat-send" id="chatSend">
-              <svg
-                width="14"
-                height="14"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="white"
-                stroke-width="2.5"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-              >
-                <line x1="22" y1="2" x2="11" y2="13"></line>
-                <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
-              </svg>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>
             </button>
           </div>
         </div>
-      </div>
-    </div>
+
+      </div><!-- /right-panel -->
+    </div><!-- /main -->
 
     <div class="status-bar" id="statusBar">Ready</div>
+
+    <!-- Script order matters: courseColors before facultyScraper before tab.js -->
+    <script src="courseColors.js"></script>
+    <script src="facultyScraper.js"></script>
     <script src="tab.js"></script>
   </body>
 </html>

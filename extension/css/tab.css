@@ -203,6 +203,8 @@ body {
   flex: 1;
   display: flex;
   overflow: hidden;
+  align-items: stretch;
+  min-height: 0;
 }
 
 /* ── Calendar Panel ── */
@@ -267,7 +269,7 @@ body {
 }
 .calendar td {
   border: 0.5px solid var(--border);
-  height: 40px;
+  height: 52px;
   vertical-align: top;
   position: relative;
   padding: 0;
@@ -288,7 +290,7 @@ body {
   padding: 4px 6px;
   border-radius: 7px;
   font-size: 10px;
-  overflow: hidden;
+  overflow: visible;
   z-index: 1;
   font-weight: 500;
   border-left-width: 2.5px;
@@ -374,6 +376,9 @@ body {
   display: flex;
   flex-direction: column;
   flex-shrink: 0;
+  overflow: hidden;
+  min-height: 0;
+  height: 100%;
 }
 
 /* ── Overview in Sidebar ── */
@@ -642,7 +647,8 @@ body {
   background: var(--maroon-light);
 }
 
-.eligible-list {
+/* Eligible list — default (e.g. manual section); Build panel overrides below */
+.manual-section .eligible-list {
   max-height: 180px;
   overflow-y: auto;
   margin-bottom: 6px;
@@ -660,9 +666,9 @@ body {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 5px 8px;
+  padding: 9px 12px;
   cursor: pointer;
-  font-size: 11px;
+  font-size: 12px;
   user-select: none;
   transition: background 0.1s;
 }
@@ -1180,3 +1186,497 @@ body {
   object-fit: contain;
   filter: brightness(0) invert(1);
 }
+
+/* ── Build/AI Mode Tabs ── */
+.mode-tabs {
+  display: flex;
+  border-bottom: 0.5px solid var(--border);
+  flex-shrink: 0;
+  background: var(--surface);
+}
+.mode-tab {
+  flex: 1;
+  padding: 10px 0;
+  font-size: 13px;
+  font-weight: 600;
+  font-family: inherit;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--text3);
+  border-bottom: 2px solid transparent;
+  transition:
+    color 0.15s,
+    border-color 0.15s;
+  letter-spacing: -0.2px;
+}
+.mode-tab.active {
+  color: var(--maroon);
+  border-bottom-color: var(--maroon);
+}
+.mode-tab:hover:not(.active) {
+  color: var(--text2);
+}
+
+/* ── Schedules collapsible header ── */
+.schedules-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 11px 16px 10px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  cursor: pointer;
+  user-select: none;
+  border-bottom: 0.5px solid var(--border);
+  flex-shrink: 0;
+  transition: background 0.1s;
+  letter-spacing: -0.2px;
+}
+.schedules-header:hover {
+  background: var(--bg);
+}
+.schedules-chevron {
+  font-size: 14px;
+  color: var(--text3);
+  transition: transform 0.2s;
+  display: inline-block;
+}
+.schedules-header.collapsed .schedules-chevron {
+  transform: rotate(0deg);
+}
+.schedules-chevron {
+  transform: rotate(90deg);
+}
+.schedules-body {
+  flex-shrink: 0;
+}
+.schedules-body .saved-list {
+  max-height: 160px;
+  overflow-y: auto;
+}
+
+/* ── Build panel ── */
+.build-panel {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+.eligible-status {
+  padding: 6px 12px 3px;
+  font-size: 11px;
+  color: var(--text3);
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+/* ── Build panel action buttons (Jira/SF aesthetic) ── */
+.bp-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 10px;
+  font-weight: 500;
+  padding: 2px 8px;
+  border-radius: 3px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text3);
+  cursor: pointer;
+  white-space: nowrap;
+  font-family: inherit;
+  transition: border-color 0.1s, background 0.1s, color 0.1s;
+  flex-shrink: 0;
+}
+.bp-chip:hover {
+  border-color: rgba(80, 18, 20, 0.35);
+  color: var(--maroon);
+}
+.bp-chip.active {
+  border-color: rgba(80, 18, 20, 0.4);
+  background: rgba(80, 18, 20, 0.07);
+  color: var(--maroon);
+}
+.bp-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  font-weight: 500;
+  padding: 2px 8px;
+  border-radius: 3px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text3);
+  cursor: pointer;
+  white-space: nowrap;
+  font-family: inherit;
+  transition: border-color 0.1s, background 0.1s, color 0.1s;
+  flex-shrink: 0;
+}
+.bp-icon-btn:hover {
+  border-color: rgba(80, 18, 20, 0.35);
+  color: var(--maroon);
+  background: rgba(80, 18, 20, 0.03);
+}
+.eligible-cache-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1px 12px 5px;
+  font-size: 10px;
+  color: var(--text3);
+  flex-shrink: 0;
+}
+.build-panel .eligible-list {
+  flex: 1;
+  min-height: 0;
+  max-height: none;
+  overflow-y: auto;
+  margin: 0 12px;
+  margin-bottom: 0;
+  border: 0.5px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+}
+.txst-save-area {
+  padding: 12px;
+  border-top: 0.5px solid var(--border);
+  flex-shrink: 0;
+  margin-top: auto;
+  background: var(--surface);
+}
+
+/* ── AI panel ── */
+.ai-panel {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+/* ── Calendar block lock/remove buttons ── */
+.course-block {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 4px;
+  overflow: visible;
+}
+.block-info {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+}
+.block-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  flex-shrink: 0;
+  /* Always visible — no hover required */
+  opacity: 1;
+}
+.block-remove-btn,
+.block-lock-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 1px 2px;
+  border-radius: 3px;
+  color: currentColor;
+  font-size: 10px;
+  line-height: 1;
+  transition:
+    background 0.12s,
+    opacity 0.12s;
+  opacity: 0.55;
+}
+.block-remove-btn:hover {
+  background: rgba(192, 57, 43, 0.15);
+  color: #c0392b;
+  opacity: 1;
+}
+.block-lock-btn:hover {
+  opacity: 1;
+}
+.block-lock-icon {
+  display: block;
+}
+.block-lock-icon.locked {
+  opacity: 1;
+}
+
+/* Locked course block styling */
+.course-block.locked {
+  border-left-width: 3px !important;
+  filter: brightness(0.91);
+}
+.course-block.locked .block-lock-btn {
+  opacity: 1;
+}
+
+/* eligible course added state */
+.eligible-course.added .eligible-course-header {
+  opacity: 0.6;
+}
+.eligible-course.added .eligible-name::after {
+  content: " ✓";
+  color: #266725;
+  font-size: 10px;
+}
+
+/* ── Schedules list: registered + new plan entries ── */
+.saved-item-registered {
+  font-weight: 500;
+  color: var(--maroon);
+}
+.saved-item-registered:hover {
+  background: rgba(80, 18, 20, 0.05);
+}
+.saved-item-registered.active {
+  background: rgba(80, 18, 20, 0.06);
+  border-left: 3px solid var(--maroon);
+}
+
+.saved-item-new-plan {
+  color: var(--text2);
+  font-style: italic;
+}
+.saved-item-new-plan:hover {
+  background: var(--bg);
+  color: var(--maroon);
+}
+.new-plan-icon {
+  font-size: 15px;
+  font-weight: 600;
+  margin-right: 6px;
+  font-style: normal;
+  color: var(--maroon);
+}
+
+/* ── Eligible course title header ── */
+.eligible-course-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text);
+  padding: 6px 8px 4px;
+  border-bottom: 0.5px solid var(--border);
+  margin-bottom: 4px;
+}
+
+/* ── Active state for non-registered saved items ── */
+.saved-item.active {
+  background: var(--bg);
+  border-left: 3px solid var(--maroon);
+}
+
+/* ── New Plan item ── */
+.saved-item-new-plan {
+  color: var(--text2);
+}
+.saved-item-new-plan:hover {
+  background: var(--bg);
+  color: var(--maroon);
+}
+.saved-item-new-plan.active {
+  background: var(--bg);
+  border-left: 3px solid var(--maroon);
+}
+.new-plan-label {
+  font-size: 12px;
+  font-weight: 500;
+}
+.new-plan-input {
+  flex: 1;
+  border: none;
+  outline: none;
+  font-size: 12px;
+  font-family: inherit;
+  background: transparent;
+  color: var(--text);
+  width: 100%;
+  min-width: 0;
+}
+
+/* ── Save to TXST button ── */
+.txst-save-btn {
+  width: 100%;
+  padding: 12px 16px;
+  background: var(--maroon);
+  color: #fff;
+  border: none;
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  transition:
+    background 0.15s,
+    opacity 0.2s;
+  letter-spacing: -0.2px;
+}
+.txst-save-btn:hover:not(:disabled) {
+  background: var(--maroon-light);
+}
+.txst-save-btn--dim {
+  background: #8a3a3c;
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* ============================================================
+   SIMONE'S MODAL REDESIGN
+   ============================================================ */
+
+/* Override base modal with Simone's new layout */
+.modal {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  background: var(--surface);
+  border-radius: var(--radius);
+  padding: 24px;
+  width: 380px;
+  max-width: 90vw;
+  z-index: 1300;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.18);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s, transform 0.2s cubic-bezier(0.4,0,0.2,1);
+}
+.modal.active {
+  opacity: 1;
+  pointer-events: all;
+  transform: translate(-50%, -50%) scale(1);
+}
+.modal-close {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  background: none;
+  border: none;
+  font-size: 16px;
+  color: var(--text3);
+  cursor: pointer;
+  padding: 4px;
+  line-height: 1;
+  border-radius: 4px;
+}
+.modal-close:hover { color: var(--text); background: var(--bg); }
+
+.modal-profile-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 6px;
+  padding-right: 28px;
+}
+.modal-avatar {
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  object-fit: cover;
+  flex-shrink: 0;
+  background: var(--border);
+}
+.modal-title {
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--maroon);
+  letter-spacing: -0.5px;
+}
+.modal-sub {
+  font-size: 12px;
+  color: var(--text3);
+  margin-bottom: 16px;
+  padding-left: 2px;
+}
+.modal-field-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.modal-field {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  font-size: 13px;
+  gap: 12px;
+}
+.modal-label {
+  color: var(--text3);
+  font-weight: 500;
+  flex-shrink: 0;
+}
+.modal-value {
+  color: var(--text);
+  font-weight: 500;
+  text-align: right;
+  word-break: break-word;
+}
+.modal-divider {
+  height: 0.5px;
+  background: var(--border);
+  margin: 14px 0;
+}
+.modal-footer {
+  display: flex;
+  flex-direction: row;
+  gap: 8px;
+  margin-top: 20px;
+}
+.modal-btn {
+  flex: 1;
+  padding: 10px;
+  border: none;
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.modal-btn.primary { background: var(--maroon); color: #fff; }
+.modal-btn.primary:hover { background: var(--maroon-light); }
+.modal-btn.rmp { background: var(--maroon); color: #fff; }
+.modal-btn.rmp:hover { background: var(--maroon-light); }
+.modal-btn.disabled { background: var(--bg); color: var(--text3); cursor: default; }
+
+.modal-email-value {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  max-width: 65%;
+  flex-wrap: nowrap;
+}
+.modal-email-value #modalProfEmail {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+.modal-copy-email {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 5px;
+  border: 0.5px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text2);
+  cursor: pointer;
+  line-height: 0;
+  transition: color 0.15s, border-color 0.15s;
+}
+.modal-copy-email:hover { color: var(--maroon); border-color: var(--maroon); }
+.modal-copy-email:active { transform: scale(0.96); }

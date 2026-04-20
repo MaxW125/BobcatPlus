@@ -104,16 +104,56 @@ body {
   min-height: 36px;
 }
 
-.course-block {
-  background: rgba(80, 18, 20, 0.09);
-  color: var(--maroon);
+/* Match tab.css chip palette; base block defers colors to chip-* */
+.mini-calendar .course-block {
   padding: 3px 5px;
   border-radius: 5px;
   font-size: 9px;
   font-weight: 500;
   margin-bottom: 2px;
-  border-left: 2px solid var(--maroon);
   line-height: 1.3;
+  border-left-width: 2px;
+  border-left-style: solid;
+}
+.mini-calendar .course-block.chip-0 {
+  background: rgba(80, 18, 20, 0.1);
+  border-color: #501214;
+  color: #501214;
+}
+.mini-calendar .course-block.chip-1 {
+  background: rgba(38, 103, 37, 0.1);
+  border-color: #266725;
+  color: #266725;
+}
+.mini-calendar .course-block.chip-2 {
+  background: rgba(0, 112, 150, 0.1);
+  border-color: #007096;
+  color: #007096;
+}
+.mini-calendar .course-block.chip-3 {
+  background: rgba(172, 145, 85, 0.12);
+  border-color: #ac9155;
+  color: #6b5a35;
+}
+.mini-calendar .course-block.chip-4 {
+  background: rgba(65, 158, 105, 0.1);
+  border-color: #419e69;
+  color: #2a6644;
+}
+.mini-calendar .course-block.chip-5 {
+  background: rgba(112, 183, 170, 0.1);
+  border-color: #70b7aa;
+  color: #3a7a72;
+}
+.mini-calendar .course-block.chip-6 {
+  background: rgba(235, 186, 69, 0.12);
+  border-color: #ebba45;
+  color: #7a5e00;
+}
+.mini-calendar .course-block.chip-7 {
+  background: rgba(234, 102, 77, 0.1);
+  border-color: #ea664d;
+  color: #a03520;
 }
 
 .no-schedule {
@@ -159,7 +199,7 @@ body {
 }
 
 .header-logo {
-  height: 36px;
+  height: 42px;
   width: auto;
   object-fit: contain;
   filter: brightness(0) invert(1);

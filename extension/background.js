@@ -136,22 +136,777 @@ const SUBJECT_MAP = {
 };
 
 // --- Step 1: Fetch student info ---
+function trimStr(v) {
+  return v != null && String(v).trim() !== "" ? String(v).trim() : "";
+}
+
+function pickGpaNumber(...vals) {
+  for (const v of vals) {
+    if (v == null || v === "") continue;
+    const n = parseFloat(String(v).replace(/,/g, ""));
+    if (Number.isFinite(n) && n >= 0 && n <= 4.5) return n;
+  }
+  return null;
+}
+
 async function getStudentInfo() {
   const response = await fetch(
     "https://dw-prod.ec.txstate.edu/responsiveDashboard/api/students/myself",
     { credentials: "include" },
   );
   const me = await response.json();
-  const student = me._embedded.students[0];
+  const student = me._embedded?.students?.[0];
+  if (!student) throw new Error("No student record");
+  const goal = student.goals?.[0];
+  if (!goal) throw new Error("No academic goal");
+
+  const details = goal.details || [];
+  const detailDesc = (key) =>
+    details.find((d) => d.code?.key === key)?.value?.description ||
+    details.find((d) => d.code?.key === key)?.value?.title ||
+    "";
+
+  const minorRaw = detailDesc("MINOR");
+
   return {
     id: student.id,
     name: student.name,
-    school: student.goals[0].school.key,
-    degree: student.goals[0].degree.key,
-    major:
-      student.goals[0].details.find((d) => d.code.key === "MAJOR")?.value
-        .description || "",
+    school: goal.school.key,
+    degree: goal.degree.key,
+    major: detailDesc("MAJOR") || "",
+    minor: minorRaw ? minorRaw : null,
+    cumulativeGPA: pickGpaNumber(
+      student.cumulativeGPA,
+      student.cumulativeGpa,
+      student.gpa,
+    ),
+    institutionalGPA: pickGpaNumber(
+      student.institutionalGPA,
+      student.institutionalGpa,
+      student.bannerGPA,
+      student.bannerGpa,
+      student.institutionGPA,
+      student.gpaInstitution,
+    ),
+    classification:
+      trimStr(student.academicLevel?.description) ||
+      trimStr(student.level?.description) ||
+      trimStr(student.studentLevelDescription) ||
+      trimStr(student.classStanding) ||
+      trimStr(student.classification) ||
+      "",
   };
+}
+
+function auditNum(v) {
+  if (v == null || v === "") return 0;
+  const n = parseFloat(String(v).replace(/,/g, ""));
+  return Number.isFinite(n) ? n : 0;
+}
+
+function blockHeading(b) {
+  return String(
+    b.title || b.label || b.blockLabel || b.blockTitle || "",
+  ).trim();
+}
+
+function parsePercentComplete(v) {
+  if (v == null || v === "") return null;
+  const n = parseFloat(String(v).replace(/%/g, "").trim());
+  return Number.isFinite(n) ? Math.min(100, Math.max(0, n)) : null;
+}
+
+function reqCreditsFromNode(node) {
+  return auditNum(
+    node.creditsRequired ??
+      node.creditHoursRequired ??
+      node.requiredCredits ??
+      node.minimumCreditsRequired ??
+      node.minimumCredits ??
+      node.hoursRequired ??
+      node.creditsTotal ??
+      node.totalCreditsRequired ??
+      node.degreeCreditsRequired ??
+      node.hoursInProgram,
+  );
+}
+
+function appliedCreditsFromNode(node) {
+  return auditNum(
+    node.creditsApplied ??
+      node.creditHoursApplied ??
+      node.creditsEarned ??
+      node.appliedCredits ??
+      node.hoursEarned ??
+      node.totalCreditsApplied ??
+      node.degreeCreditsApplied ??
+      node.creditHoursIncluded,
+  );
+}
+
+/**
+ * Degree Works often labels fields *Credits*Required / *Credits*Applied (screenshot parity).
+ * Picks the strongest req/applied pair on one object without walking into arrays.
+ */
+function findCreditPairOnObject(o) {
+  if (!o || typeof o !== "object" || Array.isArray(o)) return null;
+  let req = 0;
+  let app = 0;
+  for (const [k, v] of Object.entries(o)) {
+    const kl = k.toLowerCase();
+    if (!/credit|hour/i.test(kl)) continue;
+    const n = auditNum(v);
+    if (!Number.isFinite(n) || n <= 0) continue;
+    if (/required|minimum|mandatory/i.test(kl)) req = Math.max(req, n);
+    if (/applied|complete|earned|satisfied/i.test(kl)) app = Math.max(app, n);
+  }
+  if (req > 0) return { req, app };
+  return null;
+}
+
+/** stillNeeded + minimumCredits (Degree Works degree block). */
+function findProgressFromStillNeeded(o) {
+  if (!o || typeof o !== "object" || Array.isArray(o)) return null;
+  const min = auditNum(
+    o.minimumCredits ??
+      o.minimumCreditHours ??
+      o.degreeCreditsRequired ??
+      o.totalDegreeCredits ??
+      o.creditsRequiredForDegree,
+  );
+  const still = auditNum(
+    o.stillNeeded ??
+      o.stillNeededCredits ??
+      o.creditsStillNeeded ??
+      o.degreeCreditsStillNeeded,
+  );
+  if (min > 0 && Number.isFinite(still) && still >= 0 && still <= min * 2) {
+    const applied = Math.max(0, min - still);
+    return { req: min, app: applied };
+  }
+  return null;
+}
+
+function findCreditPairDeep(o, depth = 0, maxDepth = 5) {
+  if (!o || typeof o !== "object" || depth > maxDepth) return null;
+  const still = findProgressFromStillNeeded(o);
+  if (still) return still;
+  const direct = findCreditPairOnObject(o);
+  if (direct) return direct;
+  for (const v of Object.values(o)) {
+    if (!v || typeof v !== "object") continue;
+    if (Array.isArray(v)) {
+      for (const el of v) {
+        if (el && typeof el === "object") {
+          const p = findCreditPairDeep(el, depth + 1, maxDepth);
+          if (p) return p;
+        }
+      }
+      continue;
+    }
+    const p = findCreditPairDeep(v, depth + 1, maxDepth);
+    if (p) return p;
+  }
+  return null;
+}
+
+/** Match exactly “Freshman” / “Senior” label somewhere in the audit tree. */
+function findExactStandingLabel(root, maxVisit = 500) {
+  const re = /^(Freshman|Sophomore|Junior|Senior)$/i;
+  const stack = [root];
+  let visit = 0;
+  while (stack.length && visit < maxVisit) {
+    const o = stack.pop();
+    visit++;
+    if (!o || typeof o !== "object") continue;
+    for (const v of Object.values(o)) {
+      if (typeof v === "string") {
+        const t = v.trim();
+        if (t.length < 24 && re.test(t)) {
+          const m = t.match(re);
+          if (m)
+            return m[1].charAt(0).toUpperCase() + m[1].slice(1).toLowerCase();
+        }
+      } else if (Array.isArray(v)) {
+        for (const el of v) {
+          if (el && typeof el === "object") stack.push(el);
+        }
+      } else if (v && typeof v === "object") {
+        stack.push(v);
+      }
+    }
+  }
+  return "";
+}
+
+function pickInstitutionalCreditsForClassification(audit) {
+  const ci = audit.classInformation;
+  if (!ci || typeof ci !== "object") return null;
+  for (const [k, v] of Object.entries(ci)) {
+    if (!/credit|hour|hrs/i.test(k.toLowerCase())) continue;
+    if (/transfer|transferr|transferr?ing/i.test(k.toLowerCase())) continue;
+    if (!/inst|txst|texas|resident|degree/i.test(k.toLowerCase())) continue;
+    const n = auditNum(v);
+    if (n >= 12 && n <= 250) return n;
+  }
+  return null;
+}
+
+/** Sum credits + weighted progress from nested rule trees (Ellucian nested ruleArray). */
+function aggregateRequirementTree(nodes) {
+  let totalReq = 0;
+  let earnedWeighted = 0;
+  for (const node of nodes || []) {
+    if (node.ruleArray && node.ruleArray.length > 0) {
+      const sub = aggregateRequirementTree(node.ruleArray);
+      totalReq += sub.totalReq;
+      earnedWeighted += sub.earnedWeighted;
+      continue;
+    }
+    const req = reqCreditsFromNode(node);
+    const pct = parsePercentComplete(node.percentComplete);
+    if (req > 0) {
+      totalReq += req;
+      if (pct != null) {
+        earnedWeighted += req * (pct / 100);
+      } else {
+        earnedWeighted += Math.min(appliedCreditsFromNode(node), req);
+      }
+    }
+  }
+  return { totalReq, earnedWeighted };
+}
+
+/** Prefer nested rules so we do not double-count block summaries + rule leaves. */
+function aggregateBlockProgress(block) {
+  const still = findProgressFromStillNeeded(block);
+  if (still && still.req > 0) {
+    return {
+      totalReq: still.req,
+      earnedWeighted: Math.min(still.app, still.req),
+    };
+  }
+
+  const sub = aggregateRequirementTree(block.ruleArray);
+  if (sub.totalReq > 0) return sub;
+
+  let headReq = reqCreditsFromNode(block);
+  let applied = appliedCreditsFromNode(block);
+  if (headReq <= 0) {
+    const pair = findCreditPairOnObject(block);
+    if (pair) {
+      headReq = pair.req;
+      applied = Math.max(applied, pair.app);
+    }
+  }
+  if (headReq <= 0) {
+    const deep = findCreditPairDeep(block, 0, 5);
+    if (deep && deep.req > 0) {
+      headReq = deep.req;
+      applied = Math.max(applied, deep.app);
+    }
+  }
+  const pctBlock = parsePercentComplete(block.percentComplete);
+  if (headReq <= 0) return { totalReq: 0, earnedWeighted: 0 };
+
+  let earnedWeighted = 0;
+  if (pctBlock != null) earnedWeighted += headReq * (pctBlock / 100);
+  else earnedWeighted += Math.min(applied, headReq);
+  return { totalReq: headReq, earnedWeighted };
+}
+
+/**
+ * Combined progress from all top-level audit blocks (credits live under ruleArray).
+ * Minor flag comes from Degree Works titles and the student goal.
+ */
+function aggregateMajorMinorProgress(audit, studentMinorHint) {
+  const blocks = audit.blockArray || [];
+  let hasMinor = !!(
+    studentMinorHint && String(studentMinorHint).trim()
+  );
+
+  let useReq = 0;
+  let useEarned = 0;
+
+  for (const b of blocks) {
+    const titleLower = blockHeading(b).toLowerCase();
+    if (/\bminor\b/i.test(titleLower)) hasMinor = true;
+
+    const agg = aggregateBlockProgress(b);
+    useReq += agg.totalReq;
+    useEarned += agg.earnedWeighted;
+  }
+
+  if (useReq <= 0) {
+    for (const b of blocks) {
+      const t = blockHeading(b).toLowerCase();
+      if (!/\bdegree|bachelor|master|program|major|minor\b/i.test(t)) continue;
+      const p =
+        findCreditPairDeep(b, 0, 6) ?? findCreditPairOnObject(b);
+      if (p && p.req > 0) {
+        useReq = p.req;
+        useEarned = Math.min(p.app, p.req);
+        break;
+      }
+    }
+  }
+  if (useReq <= 0) {
+    const rootPair =
+      findCreditPairDeep(audit, 0, 4) ?? findCreditPairOnObject(audit);
+    if (rootPair) {
+      useReq = rootPair.req;
+      useEarned = Math.min(rootPair.app, rootPair.req);
+    }
+  }
+
+  let pctFromDegreeBlock = null;
+  for (const b of blocks) {
+    const t = blockHeading(b).toLowerCase();
+    const pc = parsePercentComplete(b.percentComplete);
+    if (
+      pc != null &&
+      /\bdegree|bachelor|program|major|bulletin\b/i.test(t)
+    ) {
+      pctFromDegreeBlock = Math.round(pc);
+      break;
+    }
+  }
+
+  const progressPercent =
+    pctFromDegreeBlock != null
+      ? pctFromDegreeBlock
+      : useReq > 0
+        ? Math.min(100, Math.round((useEarned / useReq) * 100))
+        : null;
+  const creditsEarned =
+    useReq > 0 ? Math.round(useEarned * 100) / 100 : null;
+
+  return {
+    creditsRequiredMajorMinor: useReq > 0 ? useReq : null,
+    creditsEarnedMajorMinor: creditsEarned,
+    progressPercent,
+    hasMinor,
+  };
+}
+
+function pickGpaFromAuditObject(o, keys) {
+  if (!o || typeof o !== "object") return null;
+  for (const k of keys) {
+    if (o[k] != null && o[k] !== "") {
+      const n = pickGpaNumber(o[k]);
+      if (n != null) return n;
+    }
+  }
+  return null;
+}
+
+/** Heuristic key scan for Banner / Degree Works variants not covered by fixed key lists. */
+function scanObjectForGpas(o) {
+  let institutional = null;
+  let cumulative = null;
+  if (!o || typeof o !== "object") {
+    return { institutional, cumulative };
+  }
+  const entries = Object.entries(o);
+  for (const [k, v] of entries) {
+    if (v == null || v === "") continue;
+    const n = pickGpaNumber(v);
+    if (n == null) continue;
+    const kl = k.toLowerCase();
+    const looksInst =
+      /institution|institutional|banner|resident|texas|txst|gpa.?tx|tx\.?\s*state/i.test(
+        kl,
+      );
+    if (looksInst && institutional == null) institutional = n;
+  }
+  for (const [k, v] of entries) {
+    if (v == null || v === "") continue;
+    const n = pickGpaNumber(v);
+    if (n == null) continue;
+    const kl = k.toLowerCase();
+    const looksInst =
+      /institution|institutional|banner|resident|texas|txst|gpa.?tx|tx\.?\s*state/i.test(
+        kl,
+      );
+    const looksCum =
+      /cumulative|overall|combined|total(?!\s*credit)/i.test(kl) ||
+      /^gpaoverall$/i.test(k.replace(/\s/g, ""));
+    if (!looksInst && looksCum && cumulative == null) cumulative = n;
+  }
+  for (const [k, v] of entries) {
+    if (v == null || v === "") continue;
+    const n = pickGpaNumber(v);
+    if (n == null) continue;
+    if (/^gpa$/i.test(k) && cumulative == null) cumulative = n;
+  }
+  return { institutional, cumulative };
+}
+
+function scanObjectForClassification(o) {
+  if (!o || typeof o !== "object") return "";
+  for (const [k, v] of Object.entries(o)) {
+    if (typeof v !== "string" || !v.trim()) continue;
+    if (/^classification$/i.test(k)) return trimStr(v);
+  }
+  for (const [k, v] of Object.entries(o)) {
+    if (typeof v !== "string" || !v.trim()) continue;
+    if (!/(standing|level|class|year|rank)/i.test(k)) continue;
+    const t = trimStr(v);
+    if (
+      /freshman|sophomore|junior|senior|grad|undergrad|master|doctoral|first|second|third|fourth/i.test(
+        t,
+      )
+    ) {
+      return t;
+    }
+  }
+  return "";
+}
+
+function scanObjectForGpasDeep(o, depth = 0) {
+  let institutional = null;
+  let cumulative = null;
+  if (!o || typeof o !== "object" || depth > 2) {
+    return { institutional, cumulative };
+  }
+  const flat = scanObjectForGpas(o);
+  institutional = flat.institutional;
+  cumulative = flat.cumulative;
+  for (const [k, v] of Object.entries(o)) {
+    if (!v || typeof v !== "object" || Array.isArray(v)) continue;
+    if (/^classArray$/i.test(k)) continue;
+    const inner = scanObjectForGpasDeep(v, depth + 1);
+    institutional = institutional ?? inner.institutional;
+    cumulative = cumulative ?? inner.cumulative;
+  }
+  return { institutional, cumulative };
+}
+
+function extractGpaAndClassificationFromAudit(audit, studentRow) {
+  let gpaTexasState =
+    pickGpaFromAuditObject(audit, [
+      "institutionalGPA",
+      "institutionalGpa",
+      "bannerGPA",
+      "bannerGpa",
+      "gpaInstitution",
+      "instGPA",
+      "institutionGPA",
+      "txstGPA",
+      "txstGpa",
+      "gpaTxst",
+    ]) ?? studentRow.institutionalGPA;
+  let gpaOverall =
+    pickGpaFromAuditObject(audit, [
+      "cumulativeGPA",
+      "cumulativeGpa",
+      "overallGPA",
+      "overallGpa",
+      "totalGPA",
+      "combinedGPA",
+      "gpa",
+      "gpaOverall",
+    ]) ?? studentRow.cumulativeGPA;
+
+  const auditDeep = scanObjectForGpasDeep(audit);
+  gpaTexasState = gpaTexasState ?? auditDeep.institutional;
+  gpaOverall = gpaOverall ?? auditDeep.cumulative;
+
+  let classification =
+    trimStr(audit.classification) ||
+    trimStr(audit.studentClassification) ||
+    trimStr(audit.studentClassDescription) ||
+    trimStr(audit.classStandingDescription) ||
+    trimStr(audit.academicLevelDescription) ||
+    trimStr(studentRow.classification);
+
+  for (const hdr of [
+    audit.studentHeader,
+    audit.header,
+    audit.auditHeader,
+    audit.degreeHeader,
+    audit.studentSummary,
+  ]) {
+    if (!hdr || typeof hdr !== "object") continue;
+    const hGpa = scanObjectForGpas(hdr);
+    gpaTexasState = gpaTexasState ?? hGpa.institutional;
+    gpaOverall = gpaOverall ?? hGpa.cumulative;
+    classification =
+      classification ||
+      scanObjectForClassification(hdr) ||
+      trimStr(hdr.classification);
+  }
+
+  const ci = audit.classInformation;
+  if (ci && typeof ci === "object") {
+    gpaTexasState =
+      gpaTexasState ??
+      pickGpaFromAuditObject(ci, [
+        "institutionalGPA",
+        "institutionalGpa",
+        "instGPA",
+        "institutionGPA",
+      ]);
+    gpaOverall =
+      gpaOverall ??
+      pickGpaFromAuditObject(ci, [
+        "cumulativeGPA",
+        "cumulativeGpa",
+        "gpa",
+        "overallGPA",
+        "overallGpa",
+      ]);
+
+    const scanned = scanObjectForGpas(ci);
+    gpaTexasState = gpaTexasState ?? scanned.institutional;
+    gpaOverall = gpaOverall ?? scanned.cumulative;
+
+    classification =
+      classification ||
+      scanObjectForClassification(ci) ||
+      trimStr(ci.studentClassDescription) ||
+      trimStr(ci.classStandingDescription);
+
+    if (Array.isArray(ci.classArray)) {
+      for (const row of ci.classArray) {
+        if (!row || typeof row !== "object") continue;
+        const rScan = scanObjectForGpas(row);
+        gpaTexasState = gpaTexasState ?? rScan.institutional;
+        gpaOverall = gpaOverall ?? rScan.cumulative;
+        if (!classification) {
+          classification =
+            scanObjectForClassification(row) ||
+            trimStr(row.classStanding) ||
+            trimStr(row.academicLevelDescription);
+        }
+      }
+    }
+  }
+
+  const si = audit.studentInformation;
+  if (si && typeof si === "object") {
+    gpaTexasState =
+      gpaTexasState ??
+      pickGpaFromAuditObject(si, [
+        "institutionalGPA",
+        "institutionalGpa",
+      ]);
+    gpaOverall =
+      gpaOverall ??
+      pickGpaFromAuditObject(si, [
+        "cumulativeGPA",
+        "cumulativeGpa",
+        "gpa",
+      ]);
+    const sScan = scanObjectForGpas(si);
+    gpaTexasState = gpaTexasState ?? sScan.institutional;
+    gpaOverall = gpaOverall ?? sScan.cumulative;
+    classification =
+      classification ||
+      trimStr(si.classStanding) ||
+      trimStr(si.studentClass) ||
+      scanObjectForClassification(si);
+  }
+
+  const deepGp = deepCollectGpasFromAudit(audit);
+  gpaTexasState = gpaTexasState ?? deepGp.institutional;
+  gpaOverall = gpaOverall ?? deepGp.cumulative;
+
+  return {
+    gpaTexasState,
+    gpaOverall,
+    classification,
+  };
+}
+
+function classifyByEarnedCredits(h) {
+  const n = Number(h);
+  if (!Number.isFinite(n)) return "";
+  if (n < 30) return "Freshman";
+  if (n < 60) return "Sophomore";
+  if (n < 90) return "Junior";
+  return "Senior";
+}
+
+async function fetchAuditJson(studentId, school, degree) {
+  const auditUrl =
+    "https://dw-prod.ec.txstate.edu/responsiveDashboard/api/audit?studentId=" +
+    studentId +
+    "&school=" +
+    school +
+    "&degree=" +
+    degree +
+    "&is-process-new=false&audit-type=AA&auditId=&include-inprogress=true&include-preregistered=true&aid-term=";
+  const response = await fetch(auditUrl, { credentials: "include" });
+  if (!response.ok) return null;
+  const raw = await response.json();
+  return unwrapAuditPayload(raw);
+}
+
+/** API may return `{ data: audit }`, `{ result: audit }`, etc. */
+function unwrapAuditPayload(raw) {
+  if (!raw || typeof raw !== "object") return raw;
+  const candidates = [
+    raw.data,
+    raw.result,
+    raw.audit,
+    raw.payload,
+    raw._embedded?.audit,
+    raw.response,
+  ];
+  for (const c of candidates) {
+    if (
+      c &&
+      typeof c === "object" &&
+      (Array.isArray(c.blockArray) ||
+        c.classInformation ||
+        Array.isArray(c.studentHeader))
+    ) {
+      return c;
+    }
+  }
+  return raw;
+}
+
+/**
+ * Walk audit JSON for Banner/Degree Works GPA keys (handles nested header/summary).
+ * Only accepts numeric values in [0, 4.5] via pickGpaNumber.
+ */
+function deepCollectGpasFromAudit(audit, maxDepth = 12) {
+  let institutional = null;
+  let cumulative = null;
+
+  function consider(k, v) {
+    const kl = String(k).toLowerCase();
+    const n = pickGpaNumber(v);
+    if (n == null) return;
+
+    const skip =
+      /high\s*school|secondary|transfer\s*gpa|rank|percentile|size|cohort|email|phone|zip|salary|fee|cost|balance|hour|credit(?!\s*gpa)|sat|act/i.test(
+        kl,
+      );
+    if (skip) return;
+
+    const looksInst =
+      /\b(institution|institutional|banner|resident|texas|txst|gpa\s*inst|inst\s*gpa|inst\.?\s*gpa|local\s*gpa)\b/i.test(
+        kl,
+      ) ||
+      (/txst/i.test(kl) && /gpa|point/i.test(kl));
+    const looksCum =
+      /\b(cumulative|overall|combined|career|degree\s*gpa|gpa\s*overall|^gpa$)\b/i.test(
+        kl,
+      ) ||
+      (/gpa/i.test(kl) && /overall|cumulative|degree|program|total(?!\s*credit)/i.test(kl));
+
+    if (looksInst && institutional == null) institutional = n;
+    if (looksCum && cumulative == null) cumulative = n;
+  }
+
+  function walk(o, depth) {
+    if (!o || typeof o !== "object" || depth > maxDepth) return;
+    if (Array.isArray(o)) {
+      for (const item of o) walk(item, depth + 1);
+      return;
+    }
+    for (const [k, v] of Object.entries(o)) {
+      if (typeof v === "number" || typeof v === "string") consider(k, v);
+      else if (v && typeof v === "object") walk(v, depth + 1);
+    }
+  }
+
+  walk(audit, 0);
+
+  if (institutional == null && cumulative == null) {
+    const any = [];
+    function collectGpaKeys(o, depth) {
+      if (!o || typeof o !== "object" || depth > maxDepth) return;
+      for (const [k, v] of Object.entries(o)) {
+        if (/\bgpa\b/i.test(k)) {
+          const n = pickGpaNumber(v);
+          if (n != null) any.push(n);
+        } else if (v && typeof v === "object") {
+          if (Array.isArray(v)) {
+            for (const el of v) collectGpaKeys(el, depth + 1);
+          } else {
+            collectGpaKeys(v, depth + 1);
+          }
+        }
+      }
+    }
+    collectGpaKeys(audit, 0);
+    if (any.length >= 1) {
+      institutional = any[0];
+      cumulative = any.length > 1 ? any[any.length - 1] : any[0];
+    }
+  }
+
+  return { institutional, cumulative };
+}
+
+/**
+ * Degree audit summary for overview: major+minor credit progress, GPAs, classification.
+ */
+async function getDegreeAuditOverview() {
+  const student = await getStudentInfo();
+  const audit = await fetchAuditJson(student.id, student.school, student.degree);
+  if (!audit) {
+    const out = {
+      ...student,
+      creditsRequiredMajorMinor: null,
+      creditsEarnedMajorMinor: null,
+      progressPercent: null,
+      hasMinor: !!(student.minor && String(student.minor).trim()),
+      gpaTexasState: student.institutionalGPA,
+      gpaOverall: student.cumulativeGPA,
+      classification: student.classification || "",
+    };
+    return out;
+  }
+
+  const mm = aggregateMajorMinorProgress(audit, student.minor);
+  const gp = extractGpaAndClassificationFromAudit(audit, student);
+
+  let classification = gp.classification;
+  if (!classification) classification = findExactStandingLabel(audit);
+  if (!classification) {
+    const instCr = pickInstitutionalCreditsForClassification(audit);
+    if (instCr != null) classification = classifyByEarnedCredits(instCr);
+  }
+  if (!classification && mm.creditsEarnedMajorMinor != null) {
+    classification = classifyByEarnedCredits(mm.creditsEarnedMajorMinor);
+  }
+
+  const merged = {
+    ...student,
+    ...mm,
+    gpaTexasState: gp.gpaTexasState ?? student.institutionalGPA,
+    gpaOverall: gp.gpaOverall ?? student.cumulativeGPA,
+    classification,
+    hasMinor:
+      mm.hasMinor || !!(student.minor && String(student.minor).trim()),
+  };
+
+  const txNum = pickGpaNumber(
+    merged.gpaTexasState,
+    gp.gpaTexasState,
+    student.institutionalGPA,
+    student.institutionalGpa,
+    student.bannerGPA,
+    student.bannerGpa,
+  );
+  const ovNum = pickGpaNumber(
+    merged.gpaOverall,
+    gp.gpaOverall,
+    student.cumulativeGPA,
+    student.cumulativeGpa,
+    student.gpa,
+  );
+  if (txNum != null) merged.gpaTexasState = txNum;
+  if (ovNum != null) merged.gpaOverall = ovNum;
+  if (merged.gpaOverall == null && merged.gpaTexasState != null) {
+    merged.gpaOverall = merged.gpaTexasState;
+  }
+  return merged;
 }
 
 // --- Step 2: Fetch and parse degree audit ---
@@ -165,7 +920,7 @@ async function getAuditData(studentId, school, degree) {
     degree +
     "&is-process-new=false&audit-type=AA&auditId=&include-inprogress=true&include-preregistered=true&aid-term=";
   const response = await fetch(auditUrl, { credentials: "include" });
-  const audit = await response.json();
+  const audit = unwrapAuditPayload(await response.json());
 
   const completed = [];
   const inProgress = [];
@@ -190,7 +945,7 @@ async function getAuditData(studentId, school, degree) {
   function findNeeded(rules) {
     for (const rule of rules) {
       if (rule.ruleArray) findNeeded(rule.ruleArray);
-      if (rule.percentComplete === "100") continue;
+      if (String(rule.percentComplete) === "100") continue;
       if (rule.ruleType !== "Course") continue;
       if (!rule.requirement || !rule.requirement.courseArray) continue;
       if (
@@ -349,7 +1104,6 @@ function extractPlanNumberFromBatchResponse(payload) {
   if (planHeaderId != null) {
     const v = Number(planHeaderId);
     if (Number.isFinite(v) && v > 0) {
-      console.log("[BobcatPlus] planNumber from data.planHeader.id:", v);
       return v;
     }
   }
@@ -385,7 +1139,6 @@ function extractPlanNumberFromBatchResponse(payload) {
     consider(row.id);
     if (row.data && typeof row.data === "object") consider(row.data.planNumber);
   }
-  console.log("[BobcatPlus] extracted planNumber (fallback):", best);
   return best;
 }
 
@@ -801,50 +1554,105 @@ async function getCurrentTerm() {
   return { code: active.code, description: active.description };
 }
 
-// --- Step 4: Search for sections of a single course ---
-async function searchCourse(subject, courseNumber, term) {
-  await fetch(
-    "https://reg-prod.ec.txstate.edu/StudentRegistrationSsb/ssb/classSearch/resetDataForm",
-    { method: "POST", credentials: "include" },
-  );
-  await fetch(
-    "https://reg-prod.ec.txstate.edu/StudentRegistrationSsb/ssb/term/search?mode=search",
-    {
-      method: "POST",
-      credentials: "include",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: new URLSearchParams({
-        term: term,
-        studyPath: "",
-        studyPathText: "",
-        startDatepicker: "",
-        endDatepicker: "",
-      }).toString(),
-    },
-  );
-  const searchForm = new FormData();
-  searchForm.append("txt_subject", subject);
-  searchForm.append("txt_courseNumber", courseNumber);
-  searchForm.append("txt_term", term);
-  searchForm.append("pageOffset", "0");
-  searchForm.append("pageMaxSize", "50");
-  searchForm.append("sortColumn", "subjectDescription");
-  searchForm.append("sortDirection", "asc");
-  searchForm.append("startDatepicker", "");
-  searchForm.append("endDatepicker", "");
-  searchForm.append(
-    "uniqueSessionId",
-    subject + courseNumber + "-" + Date.now(),
-  );
-  const response = await fetch(
-    "https://reg-prod.ec.txstate.edu/StudentRegistrationSsb/ssb/searchResults/searchResults",
-    { method: "POST", credentials: "include", body: searchForm },
-  );
-  const result = await response.json();
-  if (result.success && result.data && result.data.length > 0) {
-    return result.data;
-  }
+// Banner's StudentRegistrationSsb session has a single "current term" per mode;
+// interleaved calls across terms corrupt which response ties to which request.
+// Serialize every session-state-mutating operation through this queue.
+let sessionQueue = Promise.resolve();
+function withSessionLock(fn) {
+  const task = sessionQueue.then(fn, fn);
+  sessionQueue = task.then(() => {}, () => {});
+  return task;
+}
+
+// ============================================================
+// chrome.storage.local cache helpers
+// TTLs: course sections 1h, prerequisites 24h, descriptions 7d, terms 24h
+// ============================================================
+const CACHE_TTL = {
+  course: 60 * 60 * 1000,           // 1 hour  — seats change but not by the minute
+  prereq: 24 * 60 * 60 * 1000,      // 24 hours — fixed once schedule publishes
+  desc:   7  * 24 * 60 * 60 * 1000, // 7 days  — truly static
+  terms:  24 * 60 * 60 * 1000,      // 24 hours
+};
+
+async function cacheGet(key, ttl) {
+  try {
+    const result = await chrome.storage.local.get(key);
+    const entry = result[key];
+    if (entry && Date.now() - entry.ts < ttl) return entry.data;
+  } catch (e) {}
   return null;
+}
+
+async function cacheSet(key, data) {
+  try {
+    await chrome.storage.local.set({ [key]: { data, ts: Date.now() } });
+  } catch (e) {}
+}
+
+// Returns the timestamp (ms) of a cached entry, or null if missing/expired.
+async function cacheAge(key, ttl) {
+  try {
+    const result = await chrome.storage.local.get(key);
+    const entry = result[key];
+    if (entry && Date.now() - entry.ts < ttl) return entry.ts;
+  } catch (e) {}
+  return null;
+}
+
+// --- Step 4: Search for sections of a single course ---
+async function searchCourse(subject, courseNumber, term, { forceRefresh = false } = {}) {
+  const key = `course|${term}|${subject}|${courseNumber}`;
+  if (!forceRefresh) {
+    const cached = await cacheGet(key, CACHE_TTL.course);
+    if (cached) return cached;
+  }
+  return withSessionLock(async () => {
+    await fetch(
+      "https://reg-prod.ec.txstate.edu/StudentRegistrationSsb/ssb/classSearch/resetDataForm",
+      { method: "POST", credentials: "include" },
+    );
+    await fetch(
+      "https://reg-prod.ec.txstate.edu/StudentRegistrationSsb/ssb/term/search?mode=search",
+      {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({
+          term: term,
+          studyPath: "",
+          studyPathText: "",
+          startDatepicker: "",
+          endDatepicker: "",
+        }).toString(),
+      },
+    );
+    const searchForm = new FormData();
+    searchForm.append("txt_subject", subject);
+    searchForm.append("txt_courseNumber", courseNumber);
+    searchForm.append("txt_term", term);
+    searchForm.append("pageOffset", "0");
+    searchForm.append("pageMaxSize", "50");
+    searchForm.append("sortColumn", "subjectDescription");
+    searchForm.append("sortDirection", "asc");
+    searchForm.append("startDatepicker", "");
+    searchForm.append("endDatepicker", "");
+    searchForm.append(
+      "uniqueSessionId",
+      subject + courseNumber + "-" + Date.now(),
+    );
+    const response = await fetch(
+      "https://reg-prod.ec.txstate.edu/StudentRegistrationSsb/ssb/searchResults/searchResults",
+      { method: "POST", credentials: "include", body: searchForm },
+    );
+    const result = await response.json();
+    if (result.success && result.data && result.data.length > 0) {
+      const key = `course|${term}|${subject}|${courseNumber}`;
+      await cacheSet(key, result.data);
+      return result.data;
+    }
+    return null;
+  });
 }
 
 // --- Step 5: Check prerequisites for a course ---
@@ -892,14 +1700,19 @@ function checkPrereqGroup(group, completed, inProgress) {
 }
 
 async function checkPrereqs(crn, term, completed, inProgress) {
-  const response = await fetch(
-    "https://reg-prod.ec.txstate.edu/StudentRegistrationSsb/ssb/searchResults/getSectionPrerequisites?term=" +
-      term +
-      "&courseReferenceNumber=" +
-      crn,
-    { credentials: "include" },
-  );
-  const html = await response.text();
+  const prereqKey = `prereq|${term}|${crn}`;
+  let html = await cacheGet(prereqKey, CACHE_TTL.prereq);
+  if (!html) {
+    const response = await fetch(
+      "https://reg-prod.ec.txstate.edu/StudentRegistrationSsb/ssb/searchResults/getSectionPrerequisites?term=" +
+        term +
+        "&courseReferenceNumber=" +
+        crn,
+      { credentials: "include" },
+    );
+    html = await response.text();
+    await cacheSet(prereqKey, html);
+  }
   const orGroups = html.split(/\)\s*or\s*\(/i);
 
   if (orGroups.length > 1) {
@@ -930,6 +1743,9 @@ async function checkPrereqs(crn, term, completed, inProgress) {
 
 // --- Fetch course description for a section ---
 async function getCourseDescription(crn, term) {
+  const descKey = `desc|${term}|${crn}`;
+  const cached = await cacheGet(descKey, CACHE_TTL.desc);
+  if (cached !== null) return cached;
   try {
     const response = await fetch(
       "https://reg-prod.ec.txstate.edu/StudentRegistrationSsb/ssb/searchResults/getCourseDescription?term=" +
@@ -939,19 +1755,27 @@ async function getCourseDescription(crn, term) {
       { credentials: "include" },
     );
     const rawHtml = await response.text();
-    return rawHtml
+    const text = rawHtml
       .replace(/<[^>]*>/g, "")
       .replace(/<!--[\s\S]*?-->/g, "")
       .trim();
+    await cacheSet(descKey, text);
+    return text;
   } catch (e) {
     return "";
   }
 }
 
 // --- Main analysis function ---
-async function runAnalysis(sendUpdate, termCodeOverride) {
+// isCurrent is an optional predicate — when it returns false the caller has
+// started a newer analysis, so this run bails early to stop spamming the queue.
+async function runAnalysis(sendUpdate, termCodeOverride, isCurrent, { forceRefresh = false } = {}) {
+  const current = typeof isCurrent === "function" ? isCurrent : () => true;
+  const bail = () => !current();
+
   sendUpdate({ type: "status", message: "Detecting student info..." });
   const student = await getStudentInfo();
+  if (bail()) return;
   sendUpdate({ type: "student", data: student });
 
   sendUpdate({ type: "status", message: "Loading degree audit..." });
@@ -960,6 +1784,7 @@ async function runAnalysis(sendUpdate, termCodeOverride) {
     student.school,
     student.degree,
   );
+  if (bail()) return;
   sendUpdate({
     type: "audit",
     data: {
@@ -984,28 +1809,38 @@ async function runAnalysis(sendUpdate, termCodeOverride) {
   let term;
   if (termCodeOverride) {
     const terms = await getTerms();
+    if (bail()) return;
     const found = terms.find((t) => t.code === termCodeOverride);
     term = found
       ? { code: found.code, description: found.description }
       : { code: termCodeOverride, description: termCodeOverride };
   } else {
     term = await getCurrentTerm();
+    if (bail()) return;
   }
   sendUpdate({ type: "term", data: term });
 
   const eligible = [];
   const blocked = [];
   const notOffered = [];
+  let oldestCacheTs = null; // track when course data was last fetched from Banner
 
   // Search courses sequentially — Banner session state cannot handle parallel searches
   sendUpdate({ type: "status", message: "Searching " + needed.length + " courses..." });
   for (const course of needed) {
+    if (bail()) return;
     try {
+      const cacheKey = `course|${term.code}|${course.subject}|${course.courseNumber}`;
       const sections = await searchCourse(
         course.subject,
         course.courseNumber,
         term.code,
+        { forceRefresh },
       );
+      if (bail()) return;
+      // Track oldest cache timestamp so UI can show "last updated X min ago"
+      const ts = await cacheAge(cacheKey, CACHE_TTL.course);
+      if (ts && (oldestCacheTs === null || ts < oldestCacheTs)) oldestCacheTs = ts;
       if (sections) {
         course.crn = sections[0].courseReferenceNumber;
         course.sections = sections;
@@ -1017,6 +1852,8 @@ async function runAnalysis(sendUpdate, termCodeOverride) {
     }
   }
 
+  if (bail()) return;
+
   // Check prereqs and fetch descriptions in parallel, with description caching
   const coursesWithSections = needed.filter((c) => c.sections);
   const descCache = {};
@@ -1026,6 +1863,7 @@ async function runAnalysis(sendUpdate, termCodeOverride) {
   });
   await Promise.all(
     coursesWithSections.map(async (course) => {
+      if (bail()) return;
       try {
         const result = await checkPrereqs(
           course.crn,
@@ -1033,6 +1871,7 @@ async function runAnalysis(sendUpdate, termCodeOverride) {
           completed,
           inProgress,
         );
+        if (bail()) return;
         if (result.met) {
           const cacheKey = course.subject + course.courseNumber;
           if (!descCache[cacheKey]) {
@@ -1041,6 +1880,7 @@ async function runAnalysis(sendUpdate, termCodeOverride) {
               term.code,
             );
           }
+          if (bail()) return;
           course.sections.forEach(
             (s) => (s.courseDescription = descCache[cacheKey]),
           );
@@ -1052,13 +1892,19 @@ async function runAnalysis(sendUpdate, termCodeOverride) {
           sendUpdate({ type: "blocked", data: course });
         }
       } catch (e) {
+        if (bail()) return;
+        // Prereq check failed (network / parse error) — show the course but flag it
+        // so the UI doesn't silently lie about eligibility.
+        console.warn("[BobcatPlus] prereq check failed for", course.subject, course.courseNumber, e);
+        course.prereqCheckFailed = true;
         eligible.push(course);
         sendUpdate({ type: "eligible", data: course });
       }
     }),
   );
 
-  sendUpdate({ type: "done", data: { eligible, blocked, notOffered, needed } });
+  if (bail()) return;
+  sendUpdate({ type: "done", data: { eligible, blocked, notOffered, needed, cacheTs: oldestCacheTs } });
 }
 
 // --- Get available terms ---
@@ -1179,12 +2025,6 @@ async function getAllBannerPlans(term) {
         encodeURIComponent(uniqueSessionId),
     );
     const planHeaders = extractPlanHeaders(selectPlanHtml);
-    console.log(
-      "[BobcatPlus] getAllBannerPlans:",
-      planHeaders.length,
-      "plans:",
-      planHeaders.map((p) => p.name),
-    );
     // Return plans with planCourses so tab.js can fetch meeting times on demand
     return planHeaders.map((p) => ({
       name: p.name,
@@ -1205,10 +2045,6 @@ async function fetchPlanCalendar(term, planCourses) {
   if (!planCourses || planCourses.length === 0) return [];
 
   // Group planCourses by subject+courseNumber to minimise search calls
-  console.log(
-    "[BobcatPlus] fetchPlanCalendar: planCourses sample:",
-    JSON.stringify(planCourses.slice(0, 2)),
-  );
   const courseMap = new Map();
   for (const course of planCourses) {
     // Banner planCourses may use 'crn' or 'courseReferenceNumber'
@@ -1224,12 +2060,6 @@ async function fetchPlanCalendar(term, planCourses) {
     }
     courseMap.get(key).crns.add(crn);
   }
-  console.log(
-    "[BobcatPlus] fetchPlanCalendar: courseMap:",
-    [...courseMap.entries()].map(
-      ([k, v]) => k + " => CRNs:" + [...v.crns].join(","),
-    ),
-  );
 
   // Reference week: Monday of the current week (calendar renderer only needs day+time)
   const now = new Date();
@@ -1248,58 +2078,48 @@ async function fetchPlanCalendar(term, planCourses) {
   const events = [];
 
   for (const { subject, courseNumber, crns } of courseMap.values()) {
+    let data = null;
     try {
-      // Reset Banner search state before each query so it doesn't return cached results
-      await fetch(REG_BASE + "/ssb/classSearch/resetDataForm", {
-        method: "POST",
-        credentials: "include",
-      });
-      await fetch(REG_BASE + "/ssb/term/search?mode=search", {
-        method: "POST",
-        credentials: "include",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: new URLSearchParams({
-          term,
-          studyPath: "",
-          studyPathText: "",
-          startDatepicker: "",
-          endDatepicker: "",
-        }).toString(),
-      });
+      data = await withSessionLock(async () => {
+        // Reset Banner search state before each query so it doesn't return cached results
+        await fetch(REG_BASE + "/ssb/classSearch/resetDataForm", {
+          method: "POST",
+          credentials: "include",
+        });
+        await fetch(REG_BASE + "/ssb/term/search?mode=search", {
+          method: "POST",
+          credentials: "include",
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          body: new URLSearchParams({
+            term,
+            studyPath: "",
+            studyPathText: "",
+            startDatepicker: "",
+            endDatepicker: "",
+          }).toString(),
+        });
 
-      const form = new FormData();
-      form.append("txt_subject", subject);
-      form.append("txt_courseNumber", courseNumber);
-      form.append("txt_term", term);
-      form.append("pageOffset", "0");
-      form.append("pageMaxSize", "500");
-      form.append("sortColumn", "subjectDescription");
-      form.append("sortDirection", "asc");
-      form.append("startDatepicker", "");
-      form.append("endDatepicker", "");
-      form.append("uniqueSessionId", subject + courseNumber + "-" + Date.now());
+        const form = new FormData();
+        form.append("txt_subject", subject);
+        form.append("txt_courseNumber", courseNumber);
+        form.append("txt_term", term);
+        form.append("pageOffset", "0");
+        form.append("pageMaxSize", "500");
+        form.append("sortColumn", "subjectDescription");
+        form.append("sortDirection", "asc");
+        form.append("startDatepicker", "");
+        form.append("endDatepicker", "");
+        form.append("uniqueSessionId", subject + courseNumber + "-" + Date.now());
 
-      const res = await fetch(REG_BASE + "/ssb/searchResults/searchResults", {
-        method: "POST",
-        credentials: "include",
-        body: form,
+        const res = await fetch(REG_BASE + "/ssb/searchResults/searchResults", {
+          method: "POST",
+          credentials: "include",
+          body: form,
+        });
+        if (!res.ok) return null;
+        return await res.json().catch(() => null);
       });
-      if (!res.ok) continue;
-      const data = await res.json().catch(() => null);
       if (!data?.success || !Array.isArray(data.data)) continue;
-
-      const returnedCRNs = data.data.map((s) =>
-        String(s.courseReferenceNumber || ""),
-      );
-      console.log(
-        "[BobcatPlus] fetchPlanCalendar:",
-        subject,
-        courseNumber,
-        "- want:",
-        JSON.stringify([...crns]),
-        "- got:",
-        JSON.stringify(returnedCRNs),
-      );
 
       for (const section of data.data) {
         const crn = String(section.courseReferenceNumber || "");
@@ -1322,11 +2142,18 @@ async function fetchPlanCalendar(term, planCourses) {
             String(d.getMonth() + 1).padStart(2, "0") +
             "-" +
             String(d.getDate()).padStart(2, "0");
+          // Keep full search row so modal can read meetingsFaculty, sequence, method, etc.
           events.push({
+            ...section,
+            courseReferenceNumber: crn,
             crn,
             subject: section.subject || subject,
             courseNumber: section.courseNumber || courseNumber,
-            title: section.courseTitle || "",
+            title:
+              section.courseTitle ||
+              section.courseDescription ||
+              section.title ||
+              "",
             start: ds + "T" + bh + ":" + bm + ":00-0500",
             end: ds + "T" + eh + ":" + em + ":00-0500",
           });
@@ -1338,13 +2165,6 @@ async function fetchPlanCalendar(term, planCourses) {
     await new Promise((r) => setTimeout(r, 200));
   }
 
-  console.log(
-    "[BobcatPlus] fetchPlanCalendar: built",
-    events.length,
-    "events for",
-    courseMap.size,
-    "courses",
-  );
   return events;
 }
 
@@ -1487,7 +2307,7 @@ async function submitFirstFormFromHtmlSw(htmlText, baseHref) {
     });
     return await r.text();
   } catch (e) {
-    console.log("[BobcatPlus] submitFirstFormFromHtmlSw:", e);
+    console.warn("[BobcatPlus] submitFirstFormFromHtmlSw:", e);
     return null;
   }
 }
@@ -1509,47 +2329,46 @@ async function resolveRegistrationHtmlToJsonSw(initialText, baseHref) {
 // Used by popup.js (via getSchedule message). SAML-aware: follows redirect chains
 // that Banner returns when the session needs warming.
 async function getCurrentSchedule(term) {
-  try {
-    const r1 = await fetch(
-      "https://reg-prod.ec.txstate.edu/StudentRegistrationSsb/ssb/term/search?mode=registration",
-      {
-        method: "POST",
-        credentials: "include",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: new URLSearchParams({ term: term }).toString(),
-      },
-    );
-    console.log("[BobcatPlus] term/search status:", r1.status);
-
-    const r2 = await fetch(
-      "https://reg-prod.ec.txstate.edu/StudentRegistrationSsb/ssb/classRegistration/classRegistration",
-      { credentials: "include" },
-    );
-    console.log("[BobcatPlus] classRegistration status:", r2.status);
-
-    const response = await fetch(
-      "https://reg-prod.ec.txstate.edu/StudentRegistrationSsb/ssb/classRegistration/getRegistrationEvents?termFilter=",
-      { credentials: "include" },
-    );
-    console.log("[BobcatPlus] getRegistrationEvents status:", response.status);
-    const eventsBase =
-      "https://reg-prod.ec.txstate.edu/StudentRegistrationSsb/ssb/classRegistration/getRegistrationEvents";
-    let text = await response.text();
-    const resolved = await resolveRegistrationHtmlToJsonSw(text, eventsBase);
-    text = resolved.text;
-    if (!registrationBodyLooksLikeJson(text)) {
-      console.log(
-        "[BobcatPlus] getRegistrationEvents non-JSON after SAML hops:",
-        resolved.samlHops,
-        text.slice(0, 80),
+  return withSessionLock(async () => {
+    try {
+      const r1 = await fetch(
+        "https://reg-prod.ec.txstate.edu/StudentRegistrationSsb/ssb/term/search?mode=registration",
+        {
+          method: "POST",
+          credentials: "include",
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          body: new URLSearchParams({ term: term }).toString(),
+        },
       );
+
+      const r2 = await fetch(
+        "https://reg-prod.ec.txstate.edu/StudentRegistrationSsb/ssb/classRegistration/classRegistration",
+        { credentials: "include" },
+      );
+
+      const response = await fetch(
+        "https://reg-prod.ec.txstate.edu/StudentRegistrationSsb/ssb/classRegistration/getRegistrationEvents?termFilter=",
+        { credentials: "include" },
+      );
+      const eventsBase =
+        "https://reg-prod.ec.txstate.edu/StudentRegistrationSsb/ssb/classRegistration/getRegistrationEvents";
+      let text = await response.text();
+      const resolved = await resolveRegistrationHtmlToJsonSw(text, eventsBase);
+      text = resolved.text;
+      if (!registrationBodyLooksLikeJson(text)) {
+        console.warn(
+          "[BobcatPlus] getRegistrationEvents non-JSON after SAML hops:",
+          resolved.samlHops,
+          text.slice(0, 80),
+        );
+        return null;
+      }
+      return JSON.parse(text);
+    } catch (e) {
+      console.error("[BobcatPlus] getCurrentSchedule error:", e);
       return null;
     }
-    return JSON.parse(text);
-  } catch (e) {
-    console.log("[BobcatPlus] getCurrentSchedule error:", e);
-    return null;
-  }
+  });
 }
 
 // --- Login popup: opens DegreeWorks login, watches for success, closes automatically ---
@@ -1618,13 +2437,30 @@ function openLoginPopup(sendResponse) {
   );
 }
 
+// Every new runAnalysis request bumps this. In-flight stale analyses check
+// their captured generation against the current one and bail, so concurrent
+// runs for different terms collapse to just the latest request.
+let analysisGeneration = 0;
+
 // --- Listen for messages from popup and full tab ---
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.action === "runAnalysis") {
+    const analysisTerm = message.term || null;
+    const myGen = ++analysisGeneration;
+    const isCurrent = () => myGen === analysisGeneration;
     runAnalysis((update) => {
-      chrome.runtime.sendMessage(update);
-    }, message.term || null);
+      if (!isCurrent()) return;
+      chrome.runtime.sendMessage({ ...update, _term: analysisTerm }).catch(() => {});
+    }, analysisTerm, isCurrent, { forceRefresh: !!message.forceRefresh });
     sendResponse({ started: true });
+  }
+
+  // tab.js fires this at the very top of a term change so stale analyses bail
+  // within ~1 searchCourse instead of waiting for the new runAnalysis message
+  // (which currently doesn't land until loadSchedule + loadBannerPlans finish).
+  if (message.action === "cancelAnalysis") {
+    analysisGeneration++;
+    sendResponse({ cancelled: true });
   }
 
   if (message.action === "openFullTab") {
@@ -1639,6 +2475,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   if (message.action === "getStudentInfo") {
     getStudentInfo()
+      .then((data) => sendResponse(data))
+      .catch(() => sendResponse(null));
+    return true;
+  }
+
+  if (message.action === "getDegreeAuditOverview") {
+    getDegreeAuditOverview()
       .then((data) => sendResponse(data))
       .catch(() => sendResponse(null));
     return true;
@@ -1659,9 +2502,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message.action === "runAnalysisForTerm") {
+    const myGen = ++analysisGeneration;
+    const isCurrent = () => myGen === analysisGeneration;
     runAnalysis((update) => {
-      chrome.runtime.sendMessage(update);
-    }, message.term || null);
+      if (!isCurrent()) return;
+      chrome.runtime.sendMessage(update).catch(() => {});
+    }, message.term || null, isCurrent);
     sendResponse({ started: true });
   }
 
@@ -1732,3 +2578,4 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   return true;
 });
+

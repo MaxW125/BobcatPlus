@@ -1,0 +1,6 @@
+{"sessionId":"33925b","location":"tab.js:importBtn","message":"no registration rows — open login","data":{"fetchOk":false,"fromDiskCache":false},"timestamp":1776602262199,"hypothesisId":"H-import-empty"}
+{"sessionId":"33925b","location":"tab.js:runAnalysisAndWait:done","message":"analysis done","data":{"seq":1,"termCode":"202630","eligibleN":7},"timestamp":1776602268426,"hypothesisId":"H-eligible-seq"}
+{"sessionId":"33925b","location":"tab.js:runAnalysisAndWait:done","message":"analysis done","data":{"seq":1,"termCode":"202630","eligibleN":7},"timestamp":1776602286081,"hypothesisId":"H-eligible-seq"}
+{"sessionId":"33925b","location":"tab.js:importBtn","message":"no registration rows — open login","data":{"fetchOk":false,"fromDiskCache":false},"timestamp":1776602296324,"hypothesisId":"H-import-empty"}
+{"sessionId":"33925b","location":"tab.js:runAnalysisAndWait:done","message":"analysis done","data":{"seq":1,"termCode":"202630","eligibleN":9},"timestamp":1776602320239,"hypothesisId":"H-eligible-seq"}
+{"sessionId":"33925b","location":"tab.js:runAnalysisAndWait:done","message":"analysis done","data":{"seq":1,"termCode":"202630","eligibleN":7},"timestamp":1776602868145,"hypothesisId":"H-eligible-seq"}

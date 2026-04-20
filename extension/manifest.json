@@ -5,6 +5,7 @@
   "description": "AI-powered schedule planner for Texas State University",
   "permissions": ["storage", "tabs", "windows"],
   "host_permissions": [
+    "https://*.txst.edu/*",
     "https://dw-prod.ec.txstate.edu/*",
     "https://reg-prod.ec.txstate.edu/*",
     "https://ml3392.app.n8n.cloud/*",

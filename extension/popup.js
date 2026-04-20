@@ -90,6 +90,7 @@ function renderMiniCalendar(events) {
 
     buckets[dayIdx].push({
       name: event.subject + " " + event.courseNumber,
+      courseKey: event.subject + event.courseNumber,
       begin: startTime,
       end: endTime,
     });
@@ -104,8 +105,11 @@ function renderMiniCalendar(events) {
     html += "<td>";
     bucket.sort((a, b) => a.begin.localeCompare(b.begin));
     bucket.forEach((c) => {
+      const chip = getChipForCourse(c.courseKey);
       html +=
-        '<div class="course-block">' +
+        '<div class="course-block ' +
+        chip +
+        '">' +
         c.name +
         "<br>" +
         formatTime12(c.begin) +
