@@ -140,6 +140,7 @@ function loadCachedRegistrationEvents(term) {
 }
 
 let eligibleCourses = [];
+let showOpenSeatsOnly = false;
 let expandedCourseKey = null;
 let selectedSectionByCourse = {};
 
@@ -265,7 +266,7 @@ $("termSelect").addEventListener("change", async (e) => {
   chrome.runtime.sendMessage({ action: "cancelAnalysis" }).catch(() => {});
   analysisResults = null; cachedRawData = null; cachedRegisteredCourses = []; cachedRegisteredTerm = null;
   conversationHistory = []; bannerPlans = []; registeredScheduleCache = {};
-  eligibleCourses = []; expandedCourseKey = null; selectedSectionByCourse = {};
+  eligibleCourses = []; showOpenSeatsOnly = false; expandedCourseKey = null; selectedSectionByCourse = {};
   workingCourses = []; lockedCrns = new Set();
   newPlanDisplayName = ""; newPlanSingleClickOpensEdit = true;
   if (newPlanClickTimer) { clearTimeout(newPlanClickTimer); newPlanClickTimer = null; }
@@ -1434,10 +1435,25 @@ function renderEligibleList() {
   }
   const seenKeys = new Set();
   const dedupedCourses = eligibleCourses.filter((course) => { const k = course.subject + "-" + course.courseNumber; if (seenKeys.has(k)) return false; seenKeys.add(k); return true; });
-  if (status) status.textContent = dedupedCourses.length + " eligible courses";
+
+  const filteredCourses = showOpenSeatsOnly
+    ? dedupedCourses.filter((course) => (course.sections || []).some((s) => s.seatsAvailable > 0 || s.openSection))
+    : dedupedCourses;
+
+  if (status) {
+    const btnStyle = "font-size:10px;padding:2px 7px;cursor:pointer;color:var(--maroon);border:0.5px solid rgba(80,18,20,0.2);border-radius:20px;font-family:inherit;font-weight:500;transition:background 0.15s;margin-left:6px;background:" + (showOpenSeatsOnly ? "rgba(80,18,20,0.15)" : "rgba(80,18,20,0.05)") + ";";
+    status.innerHTML = filteredCourses.length + " eligible courses &nbsp;<button id='seatsToggleBtn' style='" + btnStyle + "'>" + (showOpenSeatsOnly ? "✓ Open only" : "Open only") + "</button>";
+    const toggleBtnEl = document.getElementById("seatsToggleBtn");
+    if (toggleBtnEl) toggleBtnEl.addEventListener("click", (e) => { e.stopPropagation(); showOpenSeatsOnly = !showOpenSeatsOnly; renderEligibleList(); });
+  }
   list.innerHTML = "";
 
-  dedupedCourses.forEach((course) => {
+  if (!filteredCourses.length) {
+    list.innerHTML = '<div class="saved-empty">No courses with open seats for this term.</div>';
+    return;
+  }
+
+  filteredCourses.forEach((course) => {
     const key = course.subject + "-" + course.courseNumber;
     const openCount = (course.sections || []).filter((s) => s.openSection).length;
     const totalCount = (course.sections || []).length;
