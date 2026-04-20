@@ -1123,6 +1123,7 @@ function addToWorkingSchedule(entry) {
   workingCourses = workingCourses.filter((c) => String(c.crn) !== crn);
   workingCourses.push({ ...entry, crn });
   renderCalendarFromWorkingCourses();
+  updateWeekHoursFromWorking();
   updateSaveBtn();
 }
 
@@ -1131,6 +1132,7 @@ function removeFromWorkingSchedule(crn) {
   workingCourses = workingCourses.filter((c) => String(c.crn) !== k);
   lockedCrns.delete(k);
   renderCalendarFromWorkingCourses();
+  updateWeekHoursFromWorking();
   updateSaveBtn();
 }
 
@@ -1295,8 +1297,8 @@ function renderCalendarFromWorkingCourses() {
     }
   }
 
-  // ── Calendar blocks (work, gym, etc.) — rendered after courses so they sit
-  // behind course blocks (z-index 0) and don't intercept clicks.
+  // ── Calendar blocks (work, gym, etc.) — rendered after course blocks.
+  // z-index 0 keeps them behind course blocks; the X button overrides pointer-events.
   const dayMapB = { Mon: 0, Tue: 1, Wed: 2, Thu: 3, Fri: 4 };
   for (const block of calendarBlocks) {
     const startH = parseInt((block.start || "0000").slice(0, 2), 10);
@@ -1306,18 +1308,31 @@ function renderCalendarFromWorkingCourses() {
     const topOffset = (startM / 60) * PX_PER_HOUR;
     const blockH    = (endH + endM / 60 - (startH + startM / 60)) * PX_PER_HOUR;
     if (blockH <= 0) continue;
-    for (const day of (block.days || [])) {
+    // Only the first day column gets the X button so there's no duplicate click target.
+    const days = (block.days || []);
+    days.forEach((day, dayLoopIdx) => {
       const dayIdx = dayMapB[day];
-      if (dayIdx === undefined) continue;
+      if (dayIdx === undefined) return;
       const cell = $("cell-" + dayIdx + "-" + startH);
-      if (!cell) continue;
+      if (!cell) return;
       const el = document.createElement("div");
       el.className = "calendar-block";
       el.style.top    = topOffset + "px";
       el.style.height = blockH    + "px";
-      el.textContent  = block.label || "";
+      const labelSpan = document.createElement("span");
+      labelSpan.className = "block-label-text";
+      labelSpan.textContent = block.label || "";
+      el.appendChild(labelSpan);
+      if (dayLoopIdx === 0) {
+        const xBtn = document.createElement("button");
+        xBtn.className = "block-remove-x";
+        xBtn.setAttribute("aria-label", "Remove " + (block.label || "block"));
+        xBtn.textContent = "×";
+        xBtn.addEventListener("click", (e) => { e.stopPropagation(); removeCalendarBlock(block.label); });
+        el.appendChild(xBtn);
+      }
       cell.appendChild(el);
-    }
+    });
   }
 
   // Keep AI toolbar lock count in sync
@@ -1828,6 +1843,14 @@ function applyNewCalendarBlocks(incoming) {
   renderCalendarFromWorkingCourses();
 }
 
+// Remove a single calendar block by label and re-render.
+function removeCalendarBlock(label) {
+  calendarBlocks = calendarBlocks.filter((b) => b.label.toLowerCase() !== (label || "").toLowerCase());
+  chrome.storage.local.set({ calendarBlocks });
+  if (studentProfile) studentProfile.calendarBlocks = calendarBlocks;
+  renderCalendarFromWorkingCourses();
+}
+
 async function sendChat() {
   const input = $("chatInput").value.trim();
   if (!input) return;
@@ -1907,7 +1930,11 @@ async function sendChat() {
       finalResult = result;
 
       // ── Calendar block detection (any mode) ──────────────────────
-      const newBlocks = result.calendarBlocks && result.calendarBlocks.length ? result.calendarBlocks : [];
+      // Only treat a block as "new" if its label isn't already saved. The AI
+      // echoes previously returned blocks in later turns (they're in history),
+      // which would falsely suppress schedules and spam the "blocks saved" notice.
+      const existingLabels = new Set(calendarBlocks.map((b) => b.label.toLowerCase()));
+      const newBlocks = (result.calendarBlocks || []).filter((b) => !existingLabels.has((b.label || "").toLowerCase()));
       if (newBlocks.length) {
         applyNewCalendarBlocks(newBlocks);
         const labels = newBlocks.map((b) => b.label).join(", ");
@@ -2116,6 +2143,29 @@ function updateWeekHours(events) {
   if (!el) return;
   el.innerHTML = totalHours > 0 ? "<strong>" + totalHours + " credit hours</strong> this semester" : "";
 }
+
+// Update the credit-hour counter from workingCourses (called after manual add/remove in Build mode).
+function updateWeekHoursFromWorking() {
+  const seen = new Set();
+  let total = 0;
+  for (const c of workingCourses) {
+    const crn = String(c.crn || "");
+    if (!crn || seen.has(crn)) continue;
+    seen.add(crn);
+    let credits = typeof c.credits === "number" ? c.credits : (typeof c.creditHours === "number" ? c.creditHours : null);
+    if (credits == null && cachedRawData?.eligible) {
+      for (const course of cachedRawData.eligible) {
+        const sec = (course.sections || []).find((s) => String(s.courseReferenceNumber) === crn);
+        if (sec) { credits = sec.creditHourLow ?? 3; break; }
+      }
+    }
+    total += credits ?? 3;
+  }
+  const el = $("weekHours");
+  if (!el) return;
+  el.innerHTML = total > 0 ? "<strong>" + total + " credit hours</strong> this semester" : "";
+}
+
 function updateOverviewFromEvents(events) {
   cachedOverviewEvents = events || [];
   renderOverviewPanel();
@@ -2317,4 +2367,59 @@ document.addEventListener("DOMContentLoaded", () => {
   }
   if (closeBtn) closeBtn.addEventListener("click", closeModal);
   if (overlay) overlay.addEventListener("click", closeModal);
+});
+
+// ============================================================
+// BLOCK CREATION MODAL
+// ============================================================
+document.addEventListener("DOMContentLoaded", () => {
+  const bOverlay = $("blockModalOverlay");
+  const bModal   = $("blockModal");
+  const bClose   = $("blockModalClose");
+  const bSave    = $("blockSaveBtn");
+  const bAdd     = $("addBlockBtn");
+
+  function openBlockModal() {
+    if (!bModal || !bOverlay) return;
+    // Reset fields
+    const label = $("blockLabelInput");
+    if (label) { label.value = ""; label.focus(); }
+    bModal.querySelectorAll(".block-day input[type='checkbox']").forEach((cb) => { cb.checked = false; });
+    const startEl = $("blockStartInput"), endEl = $("blockEndInput");
+    if (startEl) startEl.value = "17:00";
+    if (endEl)   endEl.value   = "21:00";
+    bModal.classList.add("active");
+    bOverlay.classList.add("active");
+  }
+
+  function closeBlockModal() {
+    if (!bModal || !bOverlay) return;
+    bModal.classList.remove("active");
+    bOverlay.classList.remove("active");
+  }
+
+  if (bAdd)    bAdd.addEventListener("click", openBlockModal);
+  if (bClose)  bClose.addEventListener("click", closeBlockModal);
+  if (bOverlay) bOverlay.addEventListener("click", closeBlockModal);
+
+  if (bSave) {
+    bSave.addEventListener("click", () => {
+      const label = ($("blockLabelInput")?.value || "").trim();
+      if (!label) { $("blockLabelInput")?.focus(); return; }
+      const days = [];
+      bModal.querySelectorAll(".block-day input[type='checkbox']:checked").forEach((cb) => days.push(cb.value));
+      if (!days.length) return;
+      const rawStart = ($("blockStartInput")?.value || "17:00").replace(":", "");
+      const rawEnd   = ($("blockEndInput")?.value   || "21:00").replace(":", "");
+      if (parseInt(rawStart, 10) >= parseInt(rawEnd, 10)) return;
+      applyNewCalendarBlocks([{ label, days, start: rawStart, end: rawEnd }]);
+      closeBlockModal();
+    });
+  }
+
+  // Allow Enter key to save from label input
+  const labelInput = $("blockLabelInput");
+  if (labelInput) {
+    labelInput.addEventListener("keydown", (e) => { if (e.key === "Enter") bSave?.click(); });
+  }
 });
