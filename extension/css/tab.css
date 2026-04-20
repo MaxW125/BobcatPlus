@@ -1934,210 +1934,121 @@ body {
 }
 
 @media (prefers-color-scheme: dark) {
-  /* ── Custom properties — iOS Settings-style deep neutrals with warm tint ── */
+  /*
+   * ── PALETTE ─────────────────────────────────────────────────
+   * Modelled on iOS Settings window dark mode with TXST warm tint.
+   * Two surface levels (bg = grouped bg, surface = card) + single
+   * accent colour (--dm-rose: #c47878) replaces var(--maroon) everywhere
+   * it would otherwise be near-black and illegible on dark.
+   * ─────────────────────────────────────────────────────────── */
   :root {
-    --bg: #111110;          /* near-black, slight warmth — iOS grouped bg equivalent */
-    --surface: #1e1c1a;     /* card surface — iOS secondary grouped bg */
-    --text: #f5f2ef;        /* primary label — high contrast warm white */
-    --text2: #b8b2ac;       /* secondary label */
-    --text3: #6a6460;       /* tertiary label */
-    --border: rgba(255, 255, 255, 0.09);  /* iOS separator equivalent */
-    /* --maroon, --gold, --radius* stay the same */
+    --bg:      #1a1816;   /* iOS #1c1c1e equivalent, warm */
+    --surface: #262220;   /* iOS #2c2c2e equivalent, warm */
+    --text:    #f5f2ee;   /* primary label */
+    --text2:   #b4aea8;   /* secondary label */
+    --text3:   #686260;   /* tertiary label */
+    --border:  rgba(255, 255, 255, 0.09);
   }
 
-  /* ── Calendar chip colors — lighter for dark backgrounds ── */
-  .calendar .course-block.chip-0 {
-    background: rgba(80, 18, 20, 0.35);
-    border-color: #b05050;
-    color: #e8a0a0;
+  /* ── Frosted-glass depth on right panel + modal ── */
+  .right-panel {
+    background: rgba(30, 28, 26, 0.88);
+    backdrop-filter: blur(18px) saturate(160%);
+    -webkit-backdrop-filter: blur(18px) saturate(160%);
+    border-left-color: rgba(255, 255, 255, 0.07);
   }
-  .calendar .course-block.chip-1 {
-    background: rgba(38, 103, 37, 0.28);
-    border-color: #4aaa48;
-    color: #8cd48a;
-  }
-  .calendar .course-block.chip-2 {
-    background: rgba(0, 112, 150, 0.28);
-    border-color: #30a8cc;
-    color: #72d4f4;
-  }
-  .calendar .course-block.chip-3 {
-    background: rgba(172, 145, 85, 0.22);
-    border-color: #c9ab6a;
-    color: #ddc080;
-  }
-  .calendar .course-block.chip-4 {
-    background: rgba(65, 158, 105, 0.25);
-    border-color: #5acd8a;
-    color: #7adea0;
-  }
-  .calendar .course-block.chip-5 {
-    background: rgba(112, 183, 170, 0.22);
-    border-color: #80c8bc;
-    color: #98d8cc;
-  }
-  .calendar .course-block.chip-6 {
-    background: rgba(235, 186, 69, 0.18);
-    border-color: #d8b840;
-    color: #e8cc6a;
-  }
-  .calendar .course-block.chip-7 {
-    background: rgba(234, 102, 77, 0.25);
-    border-color: #e8805c;
-    color: #f0a090;
-  }
-
-  /* ── Overview / sidebar badge colors ── */
-  .ov-green,
-  .sidebar-overview-body .ov-green {
-    background: rgba(38, 103, 37, 0.22);
-    color: #7ed47c;
-  }
-  .ov-blue,
-  .sidebar-overview-body .ov-blue {
-    background: rgba(0, 112, 150, 0.22);
-    color: #64cef0;
-  }
-  .ov-amber,
-  .sidebar-overview-body .ov-amber {
-    background: rgba(100, 72, 12, 0.25);
-    color: #c8a05a;
-  }
-  .ov-val.ov-red,
-  .sidebar-overview-body .ov-val.ov-red {
-    color: #e87060;
-  }
-
-  /* ── Misc hardcoded colors ── */
-  .manual-draft .rm {
-    color: #e06050;
-  }
-  .block-remove-btn:hover {
-    background: rgba(200, 60, 50, 0.2);
-    color: #e06050;
-  }
-  .eligible-course.added .eligible-name::after {
-    color: #7ed47c;
-  }
-  .saved-item .delete-btn:hover {
-    color: #e06050;
-  }
-  .txst-save-btn--dim {
-    background: #3a2224;
-  }
-  .resize-handle:hover {
-    background: rgba(180, 80, 80, 0.18);
-  }
-
-  /* ── Scrollbar ── */
-  .calendar-panel::-webkit-scrollbar-thumb {
-    background: rgba(255, 255, 255, 0.12);
-  }
-  .calendar-panel::-webkit-scrollbar-thumb:hover {
-    background: rgba(255, 255, 255, 0.22);
-  }
-
-  /* ── Modal shadow deepens on dark ── */
   .modal {
-    box-shadow: 0 8px 40px rgba(0, 0, 0, 0.55);
+    background: rgba(34, 32, 30, 0.94);
+    backdrop-filter: blur(24px) saturate(180%);
+    -webkit-backdrop-filter: blur(24px) saturate(180%);
+    box-shadow: 0 12px 48px rgba(0, 0, 0, 0.65), inset 0 0.5px 0 rgba(255,255,255,0.08);
+    border: 0.5px solid rgba(255, 255, 255, 0.1);
+  }
+  .sidebar {
+    background: rgba(26, 24, 22, 0.94);
+    backdrop-filter: blur(20px) saturate(150%);
+    -webkit-backdrop-filter: blur(20px) saturate(150%);
   }
 
-  /* ── top-bar select option background ── */
-  .top-bar select option {
-    background: #2a1a1b;
-  }
+  /* ── Calendar chip colors ── */
+  .calendar .course-block.chip-0 { background: rgba(80,18,20,0.38); border-color: #a85050; color: #e0a0a0; }
+  .calendar .course-block.chip-1 { background: rgba(38,103,37,0.30); border-color: #48a846; color: #8cd48a; }
+  .calendar .course-block.chip-2 { background: rgba(0,112,150,0.30); border-color: #2aa0c8; color: #70d0f0; }
+  .calendar .course-block.chip-3 { background: rgba(172,145,85,0.24); border-color: #c8a860; color: #dcc07a; }
+  .calendar .course-block.chip-4 { background: rgba(65,158,105,0.26); border-color: #58cc88; color: #78dca0; }
+  .calendar .course-block.chip-5 { background: rgba(112,183,170,0.24); border-color: #7cc8bc; color: #96d8cc; }
+  .calendar .course-block.chip-6 { background: rgba(235,186,69,0.20); border-color: #d8b83c; color: #e8cc68; }
+  .calendar .course-block.chip-7 { background: rgba(234,102,77,0.26); border-color: #e87860; color: #f0a090; }
 
-  /* ── Scrollbars throughout the right panel ── */
+  /* ── Accent: every place var(--maroon) appears as text/border in the UI
+        gets --dm-rose (#c47878) — warm terracotta, not pink, not maroon-black ── */
+  .mode-tab.active                            { color: #c47878; border-bottom-color: #c47878; }
+  .view-registered, .saved-item-registered    { color: #c47878; }
+  .modal-title                                { color: #c47878; }
+  .new-plan-icon                              { color: #c47878; }
+  .sidebar-link:hover                         { color: #c47878; }
+  .manual-link-btn:hover                      { color: #c47878; }
+  .manual-plan-name:focus                     { border-color: #c47878; }
+  .modal-copy-email:hover                     { color: #c47878; border-color: #c47878; }
+  .saved-item.active, .saved-item-registered.active,
+  .view-registered.active                     { border-left-color: #c47878; }
+
+  .bp-chip.active {
+    border-color: rgba(196, 120, 120, 0.45);
+    background: rgba(160, 60, 60, 0.16);
+    color: #c47878;
+  }
+  .bp-chip:hover                              { border-color: rgba(196,120,120,0.38); color: #c47878; }
+  .bp-icon-btn:hover                          { color: #c47878; border-color: rgba(196,120,120,0.38); background: rgba(160,60,60,0.07); }
+  .ai-lock-all-btn                            { border-color: rgba(196,120,120,0.35); background: rgba(160,60,60,0.12); color: #c47878; }
+  .ai-lock-all-btn:hover                      { background: rgba(160,60,60,0.22); border-color: rgba(196,120,120,0.5); }
+  .sched-pill                                 { background: rgba(160,60,60,0.16); border-color: rgba(196,120,120,0.32); color: #c47878; }
+  .section-check                              { color: #c47878; }
+
+  /* ── Overview badge colours ── */
+  .ov-green, .sidebar-overview-body .ov-green  { background: rgba(38,103,37,0.22); color: #7ed47c; }
+  .ov-blue,  .sidebar-overview-body .ov-blue   { background: rgba(0,112,150,0.22); color: #60ccee; }
+  .ov-amber, .sidebar-overview-body .ov-amber  { background: rgba(100,72,12,0.22); color: #c8a058; }
+  .ov-val.ov-red, .sidebar-overview-body .ov-val.ov-red { color: #e07060; }
+
+  /* ── Misc hardcoded ── */
+  .manual-draft .rm                   { color: #e07060; }
+  .block-remove-btn:hover             { background: rgba(200,60,50,0.18); color: #e07060; }
+  .eligible-course.added .eligible-name::after { color: #7ed47c; }
+  .saved-item .delete-btn:hover       { color: #e07060; }
+  .txst-save-btn--dim                 { background: #2e1c1e; }
+  .resize-handle:hover                { background: rgba(196,120,120,0.15); }
+
+  /* ── Status bar conflict ── */
+  .status-bar[data-conflict="1"]      { color: #e07060; background: rgba(200,80,60,0.10); }
+
+  /* ── Scrollbars — thin iOS-style ── */
+  .calendar-panel::-webkit-scrollbar,
   .right-panel::-webkit-scrollbar,
   .chat-messages::-webkit-scrollbar,
   .build-panel .eligible-list::-webkit-scrollbar,
   .saved-list::-webkit-scrollbar,
-  .sidebar-overview::-webkit-scrollbar,
-  .modal::-webkit-scrollbar {
-    width: 4px;
-  }
+  .sidebar-overview::-webkit-scrollbar { width: 4px; }
+
+  .calendar-panel::-webkit-scrollbar-track,
   .right-panel::-webkit-scrollbar-track,
   .chat-messages::-webkit-scrollbar-track,
   .build-panel .eligible-list::-webkit-scrollbar-track,
-  .saved-list::-webkit-scrollbar-track,
-  .sidebar-overview::-webkit-scrollbar-track,
-  .modal::-webkit-scrollbar-track {
-    background: transparent;
-  }
+  .saved-list::-webkit-scrollbar-track { background: transparent; }
+
+  .calendar-panel::-webkit-scrollbar-thumb,
   .right-panel::-webkit-scrollbar-thumb,
   .chat-messages::-webkit-scrollbar-thumb,
   .build-panel .eligible-list::-webkit-scrollbar-thumb,
-  .saved-list::-webkit-scrollbar-thumb,
-  .sidebar-overview::-webkit-scrollbar-thumb,
-  .modal::-webkit-scrollbar-thumb {
-    background: rgba(255, 255, 255, 0.12);
+  .saved-list::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.14);
     border-radius: 999px;
   }
+  .calendar-panel::-webkit-scrollbar-thumb:hover,
   .right-panel::-webkit-scrollbar-thumb:hover,
   .chat-messages::-webkit-scrollbar-thumb:hover,
-  .build-panel .eligible-list::-webkit-scrollbar-thumb:hover {
-    background: rgba(255, 255, 255, 0.22);
-  }
+  .build-panel .eligible-list::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.24); }
 
-  /* ── UI elements that use var(--maroon) as text/accent — needs lighter value on dark ── */
-  .mode-tab.active {
-    color: #e89898;
-    border-bottom-color: #e89898;
-  }
-  .bp-chip.active {
-    border-color: rgba(230, 130, 130, 0.45);
-    background: rgba(180, 60, 60, 0.18);
-    color: #f0a8a8;
-  }
-  .bp-chip:hover {
-    border-color: rgba(220, 120, 120, 0.4);
-    color: #f0a8a8;
-  }
-  .bp-icon-btn:hover {
-    color: #f0a8a8;
-    border-color: rgba(220, 120, 120, 0.4);
-    background: rgba(180, 60, 60, 0.08);
-  }
-  .ai-lock-all-btn {
-    border-color: rgba(230, 130, 130, 0.35);
-    background: rgba(180, 60, 60, 0.12);
-    color: #f0a8a8;
-  }
-  .ai-lock-all-btn:hover {
-    background: rgba(180, 60, 60, 0.22);
-    border-color: rgba(230, 130, 130, 0.5);
-  }
-  .eligible-meta {
-    color: var(--text3);
-  }
-  /* View-registered item */
-  .view-registered,
-  .saved-item-registered {
-    color: #e89898;
-  }
-  .new-plan-icon {
-    color: #e89898;
-  }
-  .modal-title {
-    color: #e89898;
-  }
-  .sidebar-link:hover {
-    color: #e89898;
-  }
-  .manual-link-btn:hover {
-    color: #e89898;
-  }
-
-  /* ── Schedule pills ── */
-  .sched-pill {
-    background: rgba(180, 80, 80, 0.15);
-    border-color: rgba(180, 80, 80, 0.3);
-    color: #e8a0a0;
-  }
-
-  /* ── Conflict status bar ── */
-  .status-bar[data-conflict="1"] {
-    color: #e87060;
-    background: rgba(200, 80, 60, 0.1);
-  }
+  /* ── select option bg ── */
+  .top-bar select option { background: #281c1e; }
 }
