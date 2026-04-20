@@ -1907,10 +1907,11 @@ async function sendChat() {
       finalResult = result;
 
       // ── Calendar block detection (any mode) ──────────────────────
-      if (result.calendarBlocks && result.calendarBlocks.length) {
-        applyNewCalendarBlocks(result.calendarBlocks);
-        const labels = result.calendarBlocks.map((b) => b.label).join(", ");
-        addMessage("system", `Calendar blocks added: ${labels}. These time slots are now blocked on your schedule.`);
+      const newBlocks = result.calendarBlocks && result.calendarBlocks.length ? result.calendarBlocks : [];
+      if (newBlocks.length) {
+        applyNewCalendarBlocks(newBlocks);
+        const labels = newBlocks.map((b) => b.label).join(", ");
+        addMessage("system", `Calendar block${newBlocks.length > 1 ? "s" : ""} saved: ${labels}. These times are now blocked on your calendar.`);
       }
 
       // ── Advisor / mixed: show response text ──────────────────────
@@ -1919,7 +1920,19 @@ async function sendChat() {
       }
 
       // ── Scheduler / mixed: validate and render schedules ─────────
+      // IMPORTANT: if new calendar blocks were returned in THIS response, the
+      // eligible course list was already pre-filtered BEFORE we knew about those
+      // blocks, so any schedules the AI returned may conflict with them. Discard
+      // the schedules and prompt the user to re-ask — on the next turn the blocks
+      // will be in calendarBlocks and properly applied to applyPreFilter.
       const schedules = result.schedules || [];
+      if (schedules.length && newBlocks.length) {
+        const blockSummary = newBlocks.map((b) => `${b.label} (${b.days.join("/")} ${b.start}–${b.end})`).join(", ");
+        addMessage("system", `Blocks saved (${blockSummary}) — they're now on your calendar. The schedules above were built before these constraints were applied and may overlap them. Send your request again and I'll build schedules that avoid these windows.`);
+        // Still break so we don't loop; user re-sends
+        break;
+      }
+
       if (schedules.length) {
         const conflicted = []; lastConflictDetails = [];
         for (const schedule of schedules) {
@@ -1951,8 +1964,16 @@ async function sendChat() {
 }
 
 function addScheduleOption(schedule) {
-  const { name, rationale, totalCredits, courses } = schedule;
+  const { name, rationale, courses } = schedule;
   const lockedList = getLockedForLLM();
+
+  // Compute credits ourselves — don't trust the AI's totalCredits field, which
+  // has proven inaccurate. Locked courses default to 3 cr each (same assumption
+  // as getLockedCredits); new courses use the credits field the AI returned.
+  const lockedCr = getLockedCredits(lockedList);
+  const newCr    = (courses || []).reduce((sum, c) => sum + (typeof c.credits === "number" ? c.credits : 3), 0);
+  const displayCredits = lockedCr + newCr;
+
   const lockedLines = lockedList.map((r) => {
     const time = r.days?.length ? r.days.join("/") + " " + formatChatTime(r.start) + "–" + formatChatTime(r.end) : "Online";
     return '<div style="margin:4px 0;opacity:0.6;border-left:2px solid var(--border);padding-left:6px"><strong>' + r.course + "</strong> — " + (r.title || "") + '<br><span style="font-size:11px">Locked · ' + time + "</span></div>";
@@ -1964,7 +1985,7 @@ function addScheduleOption(schedule) {
   const div = document.createElement("div");
   div.className = "chat-message ai";
   div.innerHTML =
-    '<div class="sender">' + name + " · " + totalCredits + " credits</div>" +
+    '<div class="sender">' + name + " · " + displayCredits + " credits</div>" +
     '<div style="font-size:11px;margin-bottom:8px;opacity:0.85">' + rationale + "</div>" +
     lockedLines + courseLines + "<br>" +
     '<button class="save-schedule-btn add-to-calendar-btn">Add to Calendar</button>' +
