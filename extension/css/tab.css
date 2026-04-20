@@ -1682,3 +1682,121 @@ body {
 }
 .modal-copy-email:hover { color: var(--maroon); border-color: var(--maroon); }
 .modal-copy-email:active { transform: scale(0.96); }
+
+/* ============================================================
+   DARK MODE  —  automatic via prefers-color-scheme
+   ============================================================ */
+@media (prefers-color-scheme: dark) {
+  /* ── Custom properties ── */
+  :root {
+    --bg: #1c1a19;
+    --surface: #252220;
+    --text: #e6e3df;
+    --text2: #a09c97;
+    --text3: #625f5b;
+    --border: rgba(255, 255, 255, 0.08);
+    /* --maroon, --gold, --radius* stay the same */
+  }
+
+  /* ── Calendar chip colors — lighter for dark backgrounds ── */
+  .calendar .course-block.chip-0 {
+    background: rgba(80, 18, 20, 0.35);
+    border-color: #b05050;
+    color: #e8a0a0;
+  }
+  .calendar .course-block.chip-1 {
+    background: rgba(38, 103, 37, 0.28);
+    border-color: #4aaa48;
+    color: #8cd48a;
+  }
+  .calendar .course-block.chip-2 {
+    background: rgba(0, 112, 150, 0.28);
+    border-color: #30a8cc;
+    color: #72d4f4;
+  }
+  .calendar .course-block.chip-3 {
+    background: rgba(172, 145, 85, 0.22);
+    border-color: #c9ab6a;
+    color: #ddc080;
+  }
+  .calendar .course-block.chip-4 {
+    background: rgba(65, 158, 105, 0.25);
+    border-color: #5acd8a;
+    color: #7adea0;
+  }
+  .calendar .course-block.chip-5 {
+    background: rgba(112, 183, 170, 0.22);
+    border-color: #80c8bc;
+    color: #98d8cc;
+  }
+  .calendar .course-block.chip-6 {
+    background: rgba(235, 186, 69, 0.18);
+    border-color: #d8b840;
+    color: #e8cc6a;
+  }
+  .calendar .course-block.chip-7 {
+    background: rgba(234, 102, 77, 0.25);
+    border-color: #e8805c;
+    color: #f0a090;
+  }
+
+  /* ── Overview / sidebar badge colors ── */
+  .ov-green,
+  .sidebar-overview-body .ov-green {
+    background: rgba(38, 103, 37, 0.22);
+    color: #7ed47c;
+  }
+  .ov-blue,
+  .sidebar-overview-body .ov-blue {
+    background: rgba(0, 112, 150, 0.22);
+    color: #64cef0;
+  }
+  .ov-amber,
+  .sidebar-overview-body .ov-amber {
+    background: rgba(100, 72, 12, 0.25);
+    color: #c8a05a;
+  }
+  .ov-val.ov-red,
+  .sidebar-overview-body .ov-val.ov-red {
+    color: #e87060;
+  }
+
+  /* ── Misc hardcoded colors ── */
+  .manual-draft .rm {
+    color: #e06050;
+  }
+  .block-remove-btn:hover {
+    background: rgba(200, 60, 50, 0.2);
+    color: #e06050;
+  }
+  .eligible-course.added .eligible-name::after {
+    color: #7ed47c;
+  }
+  .saved-item .delete-btn:hover {
+    color: #e06050;
+  }
+  .txst-save-btn--dim {
+    background: #3a2224;
+  }
+  .resize-handle:hover {
+    background: rgba(180, 80, 80, 0.18);
+  }
+
+  /* ── Scrollbar ── */
+  .calendar-panel::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.12);
+  }
+  .calendar-panel::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.22);
+  }
+
+  /* ── Modal shadow deepens on dark ── */
+  .modal {
+    box-shadow: 0 8px 40px rgba(0, 0, 0, 0.55);
+  }
+
+  /* ── top-bar select option background ── */
+  .top-bar select option {
+    background: #2a1a1b;
+  }
+}
