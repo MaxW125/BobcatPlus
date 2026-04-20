@@ -283,6 +283,31 @@ body {
 }
 
 /* Course blocks */
+/* Calendar blocks — non-course time (work, gym, personal). Rendered behind
+   course blocks (z-index 0) so they don't intercept clicks. */
+.calendar-block {
+  position: absolute;
+  left: 2px;
+  right: 2px;
+  border-radius: 5px;
+  border: 1.5px dashed rgba(110, 106, 103, 0.4);
+  background: repeating-linear-gradient(
+    -45deg,
+    rgba(110, 106, 103, 0.05) 0px,
+    rgba(110, 106, 103, 0.05) 4px,
+    transparent 4px,
+    transparent 9px
+  );
+  color: var(--text3);
+  font-size: 9px;
+  font-weight: 500;
+  letter-spacing: 0.2px;
+  padding: 3px 5px;
+  pointer-events: none;
+  overflow: hidden;
+  z-index: 0;
+}
+
 .calendar .course-block {
   position: absolute;
   left: 3px;
@@ -1930,6 +1955,19 @@ body {
   }
   .modal-footer {
     flex-direction: column;
+  }
+}
+
+@media (prefers-color-scheme: dark) {
+  .calendar-block {
+    border-color: rgba(180, 174, 168, 0.28);
+    background: repeating-linear-gradient(
+      -45deg,
+      rgba(180, 174, 168, 0.06) 0px,
+      rgba(180, 174, 168, 0.06) 4px,
+      transparent 4px,
+      transparent 9px
+    );
   }
 }
 
