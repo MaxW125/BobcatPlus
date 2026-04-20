@@ -1228,7 +1228,7 @@ function renderCalendarFromWorkingCourses() {
       }
 
       const lockSvg = p.isLocked
-        ? `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>`
+        ? `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" fill="currentColor" fill-opacity="0.35"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>`
         : `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V5a5 5 0 0 1 9.9-1.5"/></svg>`;
 
       block.innerHTML =
@@ -1447,7 +1447,7 @@ function renderEligibleList() {
   const dedupedCourses = eligibleCourses.filter((course) => { const k = course.subject + "-" + course.courseNumber; if (seenKeys.has(k)) return false; seenKeys.add(k); return true; });
 
   const filteredCourses = showOpenSeatsOnly
-    ? dedupedCourses.filter((course) => (course.sections || []).some((s) => s.seatsAvailable > 0 || s.openSection))
+    ? dedupedCourses.filter((course) => (course.sections || []).some((s) => s.openSection))
     : dedupedCourses;
 
   if (status) {
