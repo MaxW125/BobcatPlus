@@ -235,10 +235,14 @@ function registerCourseMeta(crn, meta) { if (crn && meta) calendarCourseMetaByCr
     renderManualDraft();
 
     (async () => {
+      const gen = ++termChangeGeneration;
       const ok = await checkAuth();
+      if (gen !== termChangeGeneration) return;
       if (ok) {
         await loadSchedule(currentTerm);
+        if (gen !== termChangeGeneration) return;
         await loadBannerPlans(currentTerm); // session is warm after loadSchedule
+        if (gen !== termChangeGeneration) return;
         autoLoadEligibleCourses();
       } else {
         $("statusBar").textContent =
@@ -937,18 +941,27 @@ async function resolveRegistrationHtmlToJson(initialText, baseHref) {
   return { text, samlHops };
 }
 
-async function getCurrentSchedule(term) {
-  try {
-    await fetch("https://reg-prod.ec.txstate.edu/StudentRegistrationSsb/ssb/term/search?mode=registration", { method: "POST", credentials: "include", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ term }).toString() });
-    await fetch("https://reg-prod.ec.txstate.edu/StudentRegistrationSsb/ssb/classRegistration/classRegistration", { credentials: "include" });
-    const response = await fetch("https://reg-prod.ec.txstate.edu/StudentRegistrationSsb/ssb/classRegistration/getRegistrationEvents?termFilter=", { credentials: "include" });
-    let text = await response.text();
-    const eventsBase = "https://reg-prod.ec.txstate.edu/StudentRegistrationSsb/ssb/classRegistration/getRegistrationEvents";
-    const resolved = await resolveRegistrationHtmlToJson(text, eventsBase);
-    text = resolved.text;
-    if (!registrationResponseLooksLikeJson(text)) return null;
-    return JSON.parse(text);
-  } catch (e) { return null; }
+let registrationFetchQueue = Promise.resolve();
+function queueRegistrationFetch(fn) {
+  const task = registrationFetchQueue.then(fn, fn);
+  registrationFetchQueue = task.then(() => {}, () => {});
+  return task;
+}
+
+function getCurrentSchedule(term) {
+  return queueRegistrationFetch(async () => {
+    try {
+      await fetch("https://reg-prod.ec.txstate.edu/StudentRegistrationSsb/ssb/term/search?mode=registration", { method: "POST", credentials: "include", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ term }).toString() });
+      await fetch("https://reg-prod.ec.txstate.edu/StudentRegistrationSsb/ssb/classRegistration/classRegistration", { credentials: "include" });
+      const response = await fetch("https://reg-prod.ec.txstate.edu/StudentRegistrationSsb/ssb/classRegistration/getRegistrationEvents?termFilter=", { credentials: "include" });
+      let text = await response.text();
+      const eventsBase = "https://reg-prod.ec.txstate.edu/StudentRegistrationSsb/ssb/classRegistration/getRegistrationEvents";
+      const resolved = await resolveRegistrationHtmlToJson(text, eventsBase);
+      text = resolved.text;
+      if (!registrationResponseLooksLikeJson(text)) return null;
+      return JSON.parse(text);
+    } catch (e) { return null; }
+  });
 }
 
 // ============================================================
@@ -984,7 +997,16 @@ async function loadSchedule(term) {
 
   let fromDiskCache = false;
   let data = await getCurrentSchedule(term);
-  if (data === null) { for (let i = 0; i < 16; i++) { await waitAnimationFrames(2); data = await getCurrentSchedule(term); if (data !== null) break; } }
+  if (fetchGen !== scheduleFetchGeneration) return { stale: true, hadRegistrationRows: false, fromDiskCache: false, fetchOk: false };
+  if (data === null) {
+    for (let i = 0; i < 16; i++) {
+      await waitAnimationFrames(2);
+      if (fetchGen !== scheduleFetchGeneration) return { stale: true, hadRegistrationRows: false, fromDiskCache: false, fetchOk: false };
+      data = await getCurrentSchedule(term);
+      if (fetchGen !== scheduleFetchGeneration) return { stale: true, hadRegistrationRows: false, fromDiskCache: false, fetchOk: false };
+      if (data !== null) break;
+    }
+  }
   if (data === null) { const cached = await loadCachedRegistrationEvents(term); if (cached) { data = cached; fromDiskCache = true; } }
 
   if (fetchGen !== scheduleFetchGeneration) return { stale: true, hadRegistrationRows: false, fromDiskCache: false, fetchOk: false };
