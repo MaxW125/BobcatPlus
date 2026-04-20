@@ -1585,7 +1585,13 @@ function renderSavedList() {
     const key = "saved:" + i;
     const item = document.createElement("div");
     item.className = "saved-item" + (activeScheduleKey === key ? " active" : "");
-    item.innerHTML = '<span class="name">' + schedule.name + "</span>" + '<span class="info">' + schedule.courses.length + " courses</span>" + '<span class="delete-btn" data-key="' + key + '" data-idx="' + i + '">×</span>';
+    const courses = schedule.courses || [];
+    const totalCredits = courses.reduce((sum, c) => sum + (c.credits || 3), 0);
+    const pillLabels = courses.slice(0, 3).map((c) => '<span class="sched-pill">' + (c.course || ((c.subject || "") + " " + (c.courseNumber || ""))).trim() + "</span>").join("");
+    const overflowPill = courses.length > 3 ? '<span class="sched-pill-more">+' + (courses.length - 3) + "</span>" : "";
+    item.innerHTML =
+      '<div class="sched-item-top"><span class="name">' + schedule.name + '</span><div class="sched-item-actions"><span class="info">' + totalCredits + ' cr</span><span class="delete-btn" data-key="' + key + '" data-idx="' + i + '">×</span></div></div>' +
+      (courses.length ? '<div class="sched-pills">' + pillLabels + overflowPill + "</div>" : "");
     item.addEventListener("click", (e) => { if (e.target.classList.contains("delete-btn")) return; bumpScheduleViewGeneration(); activeScheduleKey = key; renderSavedScheduleOnCalendar(schedule); renderSavedList(); });
     list.appendChild(item);
   });
@@ -1595,7 +1601,12 @@ function renderSavedList() {
     const key = "banner:" + pi;
     const item = document.createElement("div");
     item.className = "saved-item" + (activeScheduleKey === key ? " active" : "");
-    item.innerHTML = '<span class="banner-badge">TXST</span><span class="name">' + plan.name + "</span>" + '<span class="delete-btn txst-delete" title="Delete from TXST">×</span>';
+    const pc = plan.planCourses || [];
+    const planPillLabels = pc.slice(0, 3).map((c) => '<span class="sched-pill">' + ((c.subject || "") + " " + (c.courseNumber || "")).trim() + "</span>").join("");
+    const planOverflow = pc.length > 3 ? '<span class="sched-pill-more">+' + (pc.length - 3) + "</span>" : "";
+    item.innerHTML =
+      '<div class="sched-item-top"><span><span class="banner-badge">TXST</span><span class="name">' + plan.name + '</span></span><span class="delete-btn txst-delete" title="Delete from TXST">×</span></div>' +
+      (pc.length ? '<div class="sched-pills">' + planPillLabels + planOverflow + "</div>" : "");
     item.querySelector(".txst-delete").addEventListener("click", async (e) => {
       e.stopPropagation();
       if (!confirm('Delete "' + plan.name + '" from TXST?')) return;
