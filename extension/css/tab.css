@@ -1380,6 +1380,8 @@ body {
   align-items: center;
   gap: 3px;
   flex-shrink: 0;
+  position: relative;
+  z-index: 2;
   /* Always visible — no hover required */
   opacity: 1;
 }
@@ -1416,7 +1418,7 @@ body {
 /* Locked course block styling */
 .course-block.locked {
   border-left-width: 3px !important;
-  filter: brightness(0.91);
+  filter: brightness(0.87);
 }
 .course-block.locked .block-lock-btn {
   opacity: 1;
