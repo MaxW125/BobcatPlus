@@ -848,9 +848,13 @@ ${JSON.stringify(compressed, null, 2)}
     const affinityNorm = affinitySum / n;
     const onlineRatio = onlineCount / n;
     // Balance = low variance across active days. Penalty grows with spread.
-    const activeDays = Object.values(dayLoad).filter((v) => v > 0);
-    const mean = activeDays.reduce((s, v) => s + v, 0) / (activeDays.length || 1);
-    const variance = activeDays.reduce((s, v) => s + (v - mean) ** 2, 0) / (activeDays.length || 1);
+    // Balance rewards spreading load across ALL 5 weekdays. Prior version
+    // filtered to active days only, which meant a Tue/Thu-only packing had
+    // variance = 0 → perfect balance — exactly backwards. Keeping zero-load
+    // days in the calculation penalizes concentration directly.
+    const allDays = Object.values(dayLoad);
+    const mean = allDays.reduce((s, v) => s + v, 0) / allDays.length;
+    const variance = allDays.reduce((s, v) => s + (v - mean) ** 2, 0) / allDays.length;
     const balance = 1 / (1 + variance);
 
     const creditTargetDist = preferences.targetCredits
@@ -920,7 +924,7 @@ ${JSON.stringify(compressed, null, 2)}
 
     const pickFrom = (sortKey, label, tagline) => {
       const sorted = scored.slice().sort((a, b) => b[sortKey] - a[sortKey]);
-      // First pass: require Jaccard <= cap against all already-picked tops
+      // Pass 1: require Jaccard <= 0.7 (meaningfully different course sets)
       for (const s of sorted) {
         const id = picksById(s);
         if (taken.has(id)) continue;
@@ -931,8 +935,20 @@ ${JSON.stringify(compressed, null, 2)}
         top.push({ ...s, label, tagline });
         return;
       }
-      // Second pass: relax the similarity requirement rather than return < 3.
-      // Rare, but possible when the pool is genuinely narrow (small eligible set).
+      // Pass 2: require at least one different course (Jaccard < 1.0). Avoids
+      // the case where picks 1 and 3 have identical courses differing only in
+      // section time — that's not a tradeoff, it's the same plan twice.
+      for (const s of sorted) {
+        const id = picksById(s);
+        if (taken.has(id)) continue;
+        const mine = courseSet(s);
+        const duplicate = top.some((t) => jaccard(mine, courseSet(t)) >= 1.0);
+        if (duplicate) continue;
+        taken.add(id);
+        top.push({ ...s, label, tagline });
+        return;
+      }
+      // Pass 3: last-resort fallback — return SOMETHING rather than < 3 picks.
       for (const s of sorted) {
         const id = picksById(s);
         if (taken.has(id)) continue;
