@@ -2376,6 +2376,7 @@ function addScheduleOption(schedule) {
   const rationale = schedule.rationale || "";
   const courses = schedule.courses || [];
   const honored = schedule.honoredPreferences || [];
+  const unhonored = schedule.unhonoredPreferences || [];
   const lockedList = getLockedForLLM();
 
   // Compute credits ourselves — the AI's totalCredits has proven inaccurate.
@@ -2397,6 +2398,9 @@ function addScheduleOption(schedule) {
   const honoredHtml = honored.length
     ? '<div style="font-size:11px;margin:6px 0;opacity:0.85"><strong>Honored:</strong> ' + honored.map(escapeHtml).join(" · ") + "</div>"
     : "";
+  const unhonoredHtml = unhonored.length
+    ? '<div style="font-size:11px;margin:6px 0;color:var(--warn,#b07500)"><strong>Couldn\'t honor:</strong> ' + unhonored.map(escapeHtml).join(" · ") + "</div>"
+    : "";
   const taglineHtml = tagline
     ? '<div style="font-size:11px;font-style:italic;opacity:0.75;margin-bottom:4px">' + escapeHtml(tagline) + "</div>"
     : "";
@@ -2408,6 +2412,7 @@ function addScheduleOption(schedule) {
     taglineHtml +
     '<div style="font-size:12px;margin-bottom:6px">' + escapeHtml(rationale) + "</div>" +
     honoredHtml +
+    unhonoredHtml +
     lockedLines + courseLines + "<br>" +
     '<button class="save-schedule-btn add-to-calendar-btn">Add to Calendar</button>' +
     '<button class="save-schedule-btn lock-all-btn" style="margin-left:6px">Lock All</button>';

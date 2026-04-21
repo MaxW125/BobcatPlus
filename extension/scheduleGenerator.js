@@ -439,6 +439,54 @@ Existing avoid days: ${JSON.stringify(studentProfile.avoidDays)}${ragSection}
 `.trim();
   }
 
+  // Deterministic post-processor that corrects LLM weight miscalibration.
+  // The intent LLM often returns 0.6 for both "preferably no Mondays" and
+  // "I absolutely cannot do Mondays" — same constraint, opposite intensity.
+  // We scan the raw message for hedge vs. hard language near each constraint
+  // and cap/floor the weight accordingly. The LLM stays in charge of value
+  // extraction; this layer just rescues calibration.
+  const HEDGE_PATTERN = /\b(preferably|ideally|if possible|hopefully|rather|somewhat|maybe|kinda|kind of|sort of|would like|would prefer|i'd like|i would like|open to|flexible)\b/;
+  const HARD_PATTERN = /\b(cannot|can't|can not|impossible|won't|will not|never|absolutely no|absolutely not|under no circumstances|must not|no way|refuse|have to avoid|need to avoid|no classes at all)\b/;
+
+  function _clausesMentioning(msg, keywords) {
+    const lower = (msg || "").toLowerCase();
+    const clauses = lower.split(/[,.;:!?\n]/);
+    return clauses.filter((c) => keywords.some((k) => c.includes(k)));
+  }
+
+  function _calibrate(weight, clauses) {
+    if (!clauses.length) return weight;
+    const anyHedge = clauses.some((c) => HEDGE_PATTERN.test(c));
+    const anyHard = clauses.some((c) => HARD_PATTERN.test(c));
+    let w = weight == null ? null : weight;
+    // If the LLM didn't set a weight but the language is clear, seed one.
+    if (w == null) {
+      if (anyHard) w = 1.0;
+      else if (anyHedge) w = 0.5;
+      else return null;
+    }
+    if (anyHedge) w = Math.min(w, 0.7);
+    if (anyHard) w = Math.max(w, 1.0);
+    return w;
+  }
+
+  function calibrateIntentWeights(intent, userMessage) {
+    if (!intent || !intent.statedPreferences) return intent;
+    const prefs = intent.statedPreferences;
+    const dayNames = ["monday","tuesday","wednesday","thursday","friday","mon ","tue ","wed ","thu ","fri "];
+    const morningKw = ["morning","before 8","before 9","before 10","before 11","before noon","am ","early"," early"];
+    const onlineKw = ["online","remote","async","asynchronous","in person","in-person","on campus"];
+    const careerKw = ["career","goal","into ","interested","passionate","love","hate","want to","plan to"];
+
+    prefs.morningCutoffWeight = _calibrate(prefs.morningCutoffWeight, _clausesMentioning(userMessage, morningKw));
+    prefs.avoidDayWeight = _calibrate(prefs.avoidDayWeight, _clausesMentioning(userMessage, dayNames));
+    prefs.onlineWeight = _calibrate(prefs.onlineWeight, _clausesMentioning(userMessage, onlineKw));
+    prefs.careerAffinityWeight = _calibrate(prefs.careerAffinityWeight, _clausesMentioning(userMessage, careerKw));
+
+    intent.statedPreferences = prefs;
+    return intent;
+  }
+
   async function callIntent({ userMessage, studentProfile, ragChunks, apiKey, trace }) {
     const t = trace.start("intent", "Understanding your request…");
     try {
@@ -1096,7 +1144,22 @@ ${JSON.stringify(compressed, null, 2)}
     if (preferences.targetCredits)
       honored.push(`${topSchedule.result.credits} credits (target ${preferences.targetCredits})`);
 
-    return { label: topSchedule.label, tagline: topSchedule.tagline, picks, honored };
+    // Transparency: surface soft preferences the solver couldn't honor so
+    // the student sees the tradeoff rather than silently getting a schedule
+    // that ignored what they asked for.
+    const unhonored = [];
+    if (preferences.noEarlierThan && topSchedule.metrics.morningPenalty > 0)
+      unhonored.push(`some classes start before ${preferences.noEarlierThan}`);
+    const dayLoad = topSchedule.metrics.dayLoad || {};
+    const violatedAvoid = avoidList.filter((d) => (dayLoad[d] || 0) > 0);
+    if (violatedAvoid.length)
+      unhonored.push(`classes still on ${violatedAvoid.join(", ")} (soft preference)`);
+    if (preferences.targetCredits && topSchedule.result.credits !== preferences.targetCredits)
+      unhonored.push(`${topSchedule.result.credits} credits vs target ${preferences.targetCredits}`);
+    if (preferences.preferOnline && topSchedule.metrics.onlineRatio === 0)
+      unhonored.push("no online sections available in this pick");
+
+    return { label: topSchedule.label, tagline: topSchedule.tagline, picks, honored, unhonored };
   }
 
   async function callRationales({ topSchedules, affinityScores, preferences, apiKey, trace }) {
@@ -1268,6 +1331,7 @@ ${profile}${rag}
         totalCredits: top.result.credits,
         metrics: top.metrics,
         honoredPreferences: facts.honored,
+        unhonoredPreferences: facts.unhonored,
         courses: top.result.picks.map((p) => ({
           course: p.courseObj.course,
           title: p.courseObj.title,
@@ -1333,6 +1397,8 @@ ${profile}${rag}
 
     // Stage 1: Intent
     const intent = await callIntent({ userMessage, studentProfile, ragChunks, apiKey, trace });
+    // Rescue weight calibration with deterministic hedge/hard overrides.
+    calibrateIntentWeights(intent, userMessage);
 
     // Merge new blocks/avoid days into a working profile
     const updatedProfile = {
@@ -1541,6 +1607,7 @@ ${profile}${rag}
     pickTop3,
     scoreSchedule,
     callIntent, callAffinity, callRationales, callAdvisor,
+    calibrateIntentWeights,
     createTrace,
     runFixture,
     INTENT_SCHEMA_VERSION,
