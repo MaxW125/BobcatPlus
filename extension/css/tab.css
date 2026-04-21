@@ -269,7 +269,7 @@ body {
 }
 .calendar td {
   border: 0.5px solid var(--border);
-  height: 52px;
+  height: var(--cell-h, 52px);
   vertical-align: top;
   position: relative;
   padding: 0;
@@ -283,6 +283,31 @@ body {
 }
 
 /* Course blocks */
+/* Calendar blocks — non-course time (work, gym, personal). Rendered behind
+   course blocks (z-index 0) so they don't intercept clicks. */
+.calendar-block {
+  position: absolute;
+  left: 2px;
+  right: 2px;
+  border-radius: 5px;
+  border: 1.5px dashed rgba(110, 106, 103, 0.4);
+  background: repeating-linear-gradient(
+    -45deg,
+    rgba(110, 106, 103, 0.05) 0px,
+    rgba(110, 106, 103, 0.05) 4px,
+    transparent 4px,
+    transparent 9px
+  );
+  color: var(--text3);
+  font-size: 9px;
+  font-weight: 500;
+  letter-spacing: 0.2px;
+  padding: 3px 5px;
+  pointer-events: none;
+  overflow: visible;
+  z-index: 0;
+}
+
 .calendar .course-block {
   position: absolute;
   left: 3px;
@@ -371,6 +396,7 @@ body {
 /* ── Right Panel ── */
 .right-panel {
   width: 320px;
+  min-width: 240px;
   background: var(--surface);
   border-left: 0.5px solid var(--border);
   display: flex;
@@ -590,6 +616,52 @@ body {
 .saved-item .delete-btn:hover {
   color: #c0392b;
 }
+
+/* Schedules panel — credit count + course pills */
+.sched-item-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  width: 100%;
+  gap: 6px;
+}
+.sched-item-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.sched-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 5px;
+  width: 100%;
+}
+.sched-pill {
+  display: inline-block;
+  font-size: 9px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 3px;
+  background: rgba(80, 18, 20, 0.07);
+  border: 0.5px solid rgba(80, 18, 20, 0.2);
+  color: var(--maroon);
+  letter-spacing: 0.2px;
+  line-height: 1.5;
+}
+.sched-pill-more {
+  display: inline-block;
+  font-size: 9px;
+  font-weight: 500;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: transparent;
+  border: 0.5px solid var(--border);
+  color: var(--text3);
+  line-height: 1.5;
+}
+
 .saved-empty {
   padding: 12px 16px;
   font-size: 11px;
@@ -955,6 +1027,12 @@ body {
   font-size: 10px;
   color: var(--text3);
   flex-shrink: 0;
+  transition: color 0.2s, background 0.2s;
+}
+.status-bar[data-conflict="1"] {
+  color: #a03520;
+  background: rgba(160, 53, 32, 0.06);
+  font-weight: 500;
 }
 
 /* ── Course Modal ── */
@@ -1104,6 +1182,76 @@ body {
   transform: scale(1.15);
 }
 
+/* ── Section toggle rows (Build panel — click to add/remove) ── */
+.section-toggle-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 6px 4px;
+  border-bottom: 0.5px solid var(--border);
+  font-size: 10px;
+  cursor: pointer;
+  transition: background 0.1s;
+  color: var(--text2);
+  line-height: 1.35;
+  border-radius: 4px;
+  user-select: none;
+}
+.section-toggle-row:last-child {
+  border-bottom: none;
+}
+.section-toggle-row:hover {
+  background: var(--bg);
+}
+.section-toggle-row.on-calendar {
+  color: var(--text);
+  font-weight: 500;
+}
+.section-check {
+  width: 13px;
+  flex-shrink: 0;
+  text-align: center;
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--maroon);
+  line-height: 1.35;
+}
+.section-toggle-row.no-seats {
+  opacity: 0.55;
+}
+
+/* ── Calendar zoom controls ── */
+.zoom-controls {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.zoom-btn {
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--surface);
+  border: 0.5px solid var(--border);
+  border-radius: 4px;
+  font-size: 14px;
+  line-height: 1;
+  color: var(--text2);
+  cursor: pointer;
+  font-family: inherit;
+  transition: background 0.1s, color 0.1s;
+  padding: 0;
+}
+.zoom-btn:hover {
+  background: var(--bg);
+  color: var(--text);
+}
+.zoom-btn:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
 /* ── Import Schedule button (Mi's feature) ── */
 .import-btn {
   display: flex;
@@ -1132,6 +1280,107 @@ body {
 }
 .import-btn.loading {
   opacity: 0.7;
+}
+
+/* ── Add Block button (week header) ── */
+.add-block-btn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 9px;
+  font-size: 11px;
+  font-weight: 500;
+  border-radius: 6px;
+  border: 0.5px solid var(--border);
+  background: var(--surface);
+  color: var(--text2);
+  cursor: pointer;
+  font-family: inherit;
+  transition: background 0.15s, color 0.15s;
+  white-space: nowrap;
+}
+.add-block-btn:hover {
+  background: var(--bg);
+  color: var(--text);
+}
+
+/* ── Calendar block X (remove) button ── */
+.block-remove-x {
+  position: absolute;
+  top: 2px;
+  right: 3px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 1;
+  color: var(--text3);
+  padding: 0 2px;
+  border-radius: 3px;
+  pointer-events: auto;
+  opacity: 0.6;
+  transition: opacity 0.12s, color 0.12s;
+  z-index: 2;
+}
+.block-remove-x:hover {
+  opacity: 1;
+  color: #c0392b;
+}
+
+/* ── Block creation modal: text + time inputs ── */
+.block-input {
+  width: 100%;
+  padding: 7px 10px;
+  border: 0.5px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  color: var(--text);
+  font-size: 13px;
+  font-family: inherit;
+  outline: none;
+  transition: border-color 0.15s;
+}
+.block-input:focus {
+  border-color: var(--maroon);
+}
+
+/* ── Day picker row ── */
+.block-days-row {
+  display: flex;
+  gap: 6px;
+}
+.block-day {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+.block-day input[type="checkbox"] {
+  display: none;
+}
+.block-day span {
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  border: 0.5px solid var(--border);
+  background: var(--bg);
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text2);
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+  user-select: none;
+}
+.block-day input[type="checkbox"]:checked + span {
+  background: var(--maroon);
+  color: #fff;
+  border-color: var(--maroon);
+}
+.block-day span:hover {
+  border-color: var(--maroon);
+  color: var(--maroon);
 }
 
 /* ── Resize Handle (Simone) ── */
@@ -1360,6 +1609,50 @@ body {
   flex-direction: column;
   min-height: 0;
 }
+.ai-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 12px;
+  border-bottom: 0.5px solid var(--border);
+  background: var(--bg);
+  flex-shrink: 0;
+}
+.ai-toolbar-hint {
+  font-size: 10px;
+  color: var(--text3);
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ai-lock-all-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  font-weight: 600;
+  padding: 3px 9px;
+  border-radius: 4px;
+  border: 1px solid rgba(80, 18, 20, 0.35);
+  background: rgba(80, 18, 20, 0.06);
+  color: var(--maroon);
+  cursor: pointer;
+  white-space: nowrap;
+  font-family: inherit;
+  transition: background 0.1s, border-color 0.1s;
+  flex-shrink: 0;
+}
+.ai-lock-all-btn:hover {
+  background: rgba(80, 18, 20, 0.12);
+  border-color: rgba(80, 18, 20, 0.5);
+}
+.ai-lock-all-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
 
 /* ── Calendar block lock/remove buttons ── */
 .course-block {
@@ -1384,6 +1677,7 @@ body {
   z-index: 2;
   /* Always visible — no hover required */
   opacity: 1;
+  padding-top: 4px;
 }
 .block-remove-btn,
 .block-lock-btn {
@@ -1682,3 +1976,223 @@ body {
 }
 .modal-copy-email:hover { color: var(--maroon); border-color: var(--maroon); }
 .modal-copy-email:active { transform: scale(0.96); }
+
+/* ============================================================
+   DARK MODE  —  automatic via prefers-color-scheme
+   ============================================================ */
+/* ============================================================
+   RESPONSIVE / SMALL SCREEN
+   ============================================================ */
+
+/* Narrow windows (13" MacBook at partial width, ~1024–1100px) */
+@media (max-width: 1100px) {
+  .right-panel {
+    width: 280px;
+    min-width: 220px;
+  }
+}
+
+/* Small screens (tablet-ish, < 860px) — stack panels vertically */
+@media (max-width: 860px) {
+  .main {
+    flex-direction: column;
+    overflow-y: auto;
+    overflow-x: hidden;
+  }
+  .calendar-panel {
+    flex: none;
+    min-height: 420px;
+    height: 56vh;
+    overflow-y: auto;
+    border-bottom: 0.5px solid var(--border);
+  }
+  .resize-handle {
+    display: none;
+  }
+  .right-panel {
+    width: 100% !important;
+    min-width: 0;
+    border-left: none;
+    border-top: 0.5px solid var(--border);
+    height: auto;
+    min-height: 340px;
+    flex-shrink: 0;
+  }
+  /* Calendar table: minimum readable column width */
+  .calendar {
+    min-width: 480px;
+    font-size: 9px;
+  }
+  .calendar-panel {
+    overflow-x: auto;
+  }
+  .calendar th,
+  .calendar .time-label {
+    font-size: 9px;
+    padding: 6px 2px;
+  }
+}
+
+/* Very small screens (< 600px) */
+@media (max-width: 600px) {
+  .top-bar {
+    padding: 10px 12px;
+  }
+  .top-bar h1 {
+    font-size: 15px;
+  }
+  .top-bar select {
+    font-size: 11px;
+    padding: 5px 22px 5px 8px;
+  }
+  .calendar-panel {
+    padding: 0 8px 8px;
+    height: 50vh;
+    min-height: 300px;
+  }
+  .modal {
+    width: 96vw;
+    padding: 18px 16px;
+  }
+  .modal-footer {
+    flex-direction: column;
+  }
+}
+
+@media (prefers-color-scheme: dark) {
+  .calendar-block {
+    border-color: rgba(180, 174, 168, 0.28);
+    background: repeating-linear-gradient(
+      -45deg,
+      rgba(180, 174, 168, 0.06) 0px,
+      rgba(180, 174, 168, 0.06) 4px,
+      transparent 4px,
+      transparent 9px
+    );
+  }
+}
+
+@media (prefers-color-scheme: dark) {
+  /*
+   * ── PALETTE ─────────────────────────────────────────────────
+   * Modelled on iOS Settings window dark mode with TXST warm tint.
+   * Two surface levels (bg = grouped bg, surface = card) + single
+   * accent colour (--dm-rose: #c47878) replaces var(--maroon) everywhere
+   * it would otherwise be near-black and illegible on dark.
+   * ─────────────────────────────────────────────────────────── */
+  :root {
+    --bg:      #1a1816;   /* iOS #1c1c1e equivalent, warm */
+    --surface: #262220;   /* iOS #2c2c2e equivalent, warm */
+    --text:    #f5f2ee;   /* primary label */
+    --text2:   #b4aea8;   /* secondary label */
+    --text3:   #686260;   /* tertiary label */
+    --border:  rgba(255, 255, 255, 0.09);
+  }
+
+  /* ── Frosted-glass depth on right panel + modal ── */
+  .right-panel {
+    background: rgba(30, 28, 26, 0.88);
+    backdrop-filter: blur(18px) saturate(160%);
+    -webkit-backdrop-filter: blur(18px) saturate(160%);
+    border-left-color: rgba(255, 255, 255, 0.07);
+  }
+  .modal {
+    background: rgba(34, 32, 30, 0.94);
+    backdrop-filter: blur(24px) saturate(180%);
+    -webkit-backdrop-filter: blur(24px) saturate(180%);
+    box-shadow: 0 12px 48px rgba(0, 0, 0, 0.65), inset 0 0.5px 0 rgba(255,255,255,0.08);
+    border: 0.5px solid rgba(255, 255, 255, 0.1);
+  }
+  .sidebar {
+    background: rgba(26, 24, 22, 0.94);
+    backdrop-filter: blur(20px) saturate(150%);
+    -webkit-backdrop-filter: blur(20px) saturate(150%);
+  }
+
+  /* ── Calendar chip colors ── */
+  .calendar .course-block.chip-0 { background: rgba(80,18,20,0.38); border-color: #a85050; color: #e0a0a0; }
+  .calendar .course-block.chip-1 { background: rgba(38,103,37,0.30); border-color: #48a846; color: #8cd48a; }
+  .calendar .course-block.chip-2 { background: rgba(0,112,150,0.30); border-color: #2aa0c8; color: #70d0f0; }
+  .calendar .course-block.chip-3 { background: rgba(172,145,85,0.24); border-color: #c8a860; color: #dcc07a; }
+  .calendar .course-block.chip-4 { background: rgba(65,158,105,0.26); border-color: #58cc88; color: #78dca0; }
+  .calendar .course-block.chip-5 { background: rgba(112,183,170,0.24); border-color: #7cc8bc; color: #96d8cc; }
+  .calendar .course-block.chip-6 { background: rgba(235,186,69,0.20); border-color: #d8b83c; color: #e8cc68; }
+  .calendar .course-block.chip-7 { background: rgba(234,102,77,0.26); border-color: #e87860; color: #f0a090; }
+
+  /* ── Accent: every place var(--maroon) appears as text/border in the UI
+        gets --dm-rose (#c47878) — warm terracotta, not pink, not maroon-black ── */
+  .mode-tab.active                            { color: #c47878; border-bottom-color: #c47878; }
+  .view-registered, .saved-item-registered    { color: #c47878; }
+  .modal-title                                { color: #c47878; }
+  .new-plan-icon                              { color: #c47878; }
+  .sidebar-link:hover                         { color: #c47878; }
+  .manual-link-btn:hover                      { color: #c47878; }
+  .manual-plan-name:focus                     { border-color: #c47878; }
+  .modal-copy-email:hover                     { color: #c47878; border-color: #c47878; }
+  .saved-item.active, .saved-item-registered.active,
+  .view-registered.active                     { border-left-color: #c47878; }
+
+  .bp-chip.active {
+    border-color: rgba(196, 120, 120, 0.45);
+    background: rgba(160, 60, 60, 0.16);
+    color: #c47878;
+  }
+  .bp-chip:hover                              { border-color: rgba(196,120,120,0.38); color: #c47878; }
+  .bp-icon-btn:hover                          { color: #c47878; border-color: rgba(196,120,120,0.38); background: rgba(160,60,60,0.07); }
+  .ai-lock-all-btn                            { border-color: rgba(196,120,120,0.35); background: rgba(160,60,60,0.12); color: #c47878; }
+  .ai-lock-all-btn:hover                      { background: rgba(160,60,60,0.22); border-color: rgba(196,120,120,0.5); }
+  .sched-pill                                 { background: rgba(160,60,60,0.16); border-color: rgba(196,120,120,0.32); color: #c47878; }
+  .section-check                              { color: #c47878; }
+
+  /* ── Overview badge colours ── */
+  .ov-green, .sidebar-overview-body .ov-green  { background: rgba(38,103,37,0.22); color: #7ed47c; }
+  .ov-blue,  .sidebar-overview-body .ov-blue   { background: rgba(0,112,150,0.22); color: #60ccee; }
+  .ov-amber, .sidebar-overview-body .ov-amber  { background: rgba(100,72,12,0.22); color: #c8a058; }
+  .ov-val.ov-red, .sidebar-overview-body .ov-val.ov-red { color: #e07060; }
+
+  /* ── Misc hardcoded ── */
+  .manual-draft .rm                   { color: #e07060; }
+  .block-remove-btn:hover             { background: rgba(200,60,50,0.18); color: #e07060; }
+  .block-remove-x:hover               { color: #e07060; }
+  .block-day span:hover               { border-color: #c47878; color: #c47878; }
+  .block-day input[type="checkbox"]:checked + span { background: #8a3a3c; border-color: #8a3a3c; }
+  .block-input                        { background: var(--bg); color: var(--text); }
+  .block-input:focus                  { border-color: #c47878; }
+  .eligible-course.added .eligible-name::after { color: #7ed47c; }
+  .saved-item .delete-btn:hover       { color: #e07060; }
+  .txst-save-btn--dim                 { background: #2e1c1e; }
+  .resize-handle:hover                { background: rgba(196,120,120,0.15); }
+
+  /* ── Status bar conflict ── */
+  .status-bar[data-conflict="1"]      { color: #e07060; background: rgba(200,80,60,0.10); }
+
+  /* ── Scrollbars — thin iOS-style ── */
+  .calendar-panel::-webkit-scrollbar,
+  .right-panel::-webkit-scrollbar,
+  .chat-messages::-webkit-scrollbar,
+  .build-panel .eligible-list::-webkit-scrollbar,
+  .saved-list::-webkit-scrollbar,
+  .sidebar-overview::-webkit-scrollbar { width: 4px; }
+
+  .calendar-panel::-webkit-scrollbar-track,
+  .right-panel::-webkit-scrollbar-track,
+  .chat-messages::-webkit-scrollbar-track,
+  .build-panel .eligible-list::-webkit-scrollbar-track,
+  .saved-list::-webkit-scrollbar-track { background: transparent; }
+
+  .calendar-panel::-webkit-scrollbar-thumb,
+  .right-panel::-webkit-scrollbar-thumb,
+  .chat-messages::-webkit-scrollbar-thumb,
+  .build-panel .eligible-list::-webkit-scrollbar-thumb,
+  .saved-list::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.14);
+    border-radius: 999px;
+  }
+  .calendar-panel::-webkit-scrollbar-thumb:hover,
+  .right-panel::-webkit-scrollbar-thumb:hover,
+  .chat-messages::-webkit-scrollbar-thumb:hover,
+  .build-panel .eligible-list::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.24); }
+
+  /* ── select option bg ── */
+  .top-bar select option { background: #281c1e; }
+}

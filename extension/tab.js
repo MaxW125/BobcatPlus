@@ -28,18 +28,23 @@ function compressRegisteredForLLM(events) {
   return courses;
 }
 
-function applyPreFilter(compressed, registeredCourses) {
+function applyPreFilter(compressed, registeredCourses, calendarBlocksList = []) {
+  // Treat calendar blocks as additional locked time slots the AI must not schedule into.
+  const blockSlots = calendarBlocksList.map((b) => ({
+    crn: null, course: b.label, days: b.days, start: b.start, end: b.end,
+  }));
+  const allBlocked = [...registeredCourses, ...blockSlots];
   return {
     eligible: compressed.eligible.map((course) => {
       const filteredSections = course.sections.map((section) => {
         if (section.online || !section.days || !section.start) return { ...section, conflictsWith: [] };
         const conflicts = [];
-        for (const reg of registeredCourses) {
-          if (!reg.days || !reg.start) continue;
-          const sharedDays = section.days.filter((d) => reg.days.includes(d));
+        for (const blocked of allBlocked) {
+          if (!blocked.days || !blocked.start) continue;
+          const sharedDays = section.days.filter((d) => blocked.days.includes(d));
           if (sharedDays.length === 0) continue;
-          if (timeStrToMinutes(section.start) < timeStrToMinutes(reg.end) && timeStrToMinutes(reg.start) < timeStrToMinutes(section.end))
-            conflicts.push(reg.crn + " (" + reg.course + ")");
+          if (timeStrToMinutes(section.start) < timeStrToMinutes(blocked.end) && timeStrToMinutes(blocked.start) < timeStrToMinutes(section.end))
+            conflicts.push(blocked.crn ? blocked.crn + " (" + blocked.course + ")" : blocked.course);
         }
         return { ...section, conflictsWith: conflicts };
       }).filter((s) => s.conflictsWith.length === 0);
@@ -67,39 +72,8 @@ function compressForLLM(data) {
   };
 }
 
-const SCHEDULE_SYSTEM_PROMPT = `
-You are an academic schedule planning assistant helping students at Texas State University 
-build optimal course schedules for an upcoming semester.
-
-You will receive:
-1. ALREADY LOCKED: courses the student has locked in. These are FIXED — never conflict with them, never include them in output, only output NEW courses. Treat their time slots as completely blocked.
-2. ELIGIBLE COURSES: courses available to add, each with open sections. Each section may include a conflictsWith[] field — if non-empty, that section conflicts with a locked course and must NOT be selected.
-3. The student's preferences in natural language.
-
-HARD RULES:
-1. No time conflicts between any two sections on the same day.
-2. Only select sections where seatsAvailable > 0 unless student says otherwise.
-3. Never select two courses satisfying the same requirementLabel unless student asks.
-4. Respect all explicit timing constraints.
-5. Only use sections from the provided eligible list.
-
-OUTPUT FORMAT — valid JSON only, no markdown:
-{
-  "schedules": [
-    {
-      "name": "Schedule A — <label>",
-      "rationale": "<2-4 sentences>",
-      "totalCredits": 12,
-      "courses": [
-        { "course": "SOCI 3363", "title": "MEDICAL SOCI", "crn": "19272", "days": ["Mon","Wed"], "start": "1230", "end": "1350", "online": false, "requirementSatisfied": "Sociology Requirement", "instructor": "Zhang, Yan" }
-      ]
-    }
-  ],
-  "followUpQuestion": "<short friendly question>"
-}
-
-Generate exactly 3 meaningfully distinct schedules. Always regenerate all 3 on each turn.
-`.trim();
+// System prompt is now built dynamically per-request via buildSystemPrompt()
+// in scheduleGenerator.js, which is loaded before this file in tab.html.
 
 // ============================================================
 // APP STATE
@@ -109,6 +83,8 @@ const $ = (id) => document.getElementById(id);
 function sendToBackground(message) { return new Promise((resolve) => chrome.runtime.sendMessage(message, resolve)); }
 
 let currentStudent = null;
+let studentProfile = null;     // built by buildStudentProfile() when student data loads
+let calendarBlocks = [];       // non-course time blocks (work, gym, etc.) — persisted
 let currentTerm = null;
 let analysisResults = null;
 let eligibleAnalysisSeq = 0;
@@ -167,7 +143,8 @@ let newPlanClickTimer = null;
 const START_HOUR = 7;
 const END_HOUR = 22;
 const DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"];
-const PX_PER_HOUR = 52;
+let PX_PER_HOUR = 52;
+const PX_STEPS = [30, 38, 52, 68]; // zoom levels: -2 → +1
 
 // ── MODAL METADATA ────────────────────────────────────────
 const calendarCourseMetaByCrn = new Map();
@@ -202,8 +179,9 @@ function registerCourseMeta(crn, meta) { if (crn && meta) calendarCourseMetaByCr
     },
   );
 
-  chrome.storage.local.get("savedSchedules", (result) => {
+  chrome.storage.local.get(["savedSchedules", "calendarBlocks"], (result) => {
     if (result.savedSchedules) savedSchedules = result.savedSchedules;
+    if (result.calendarBlocks) calendarBlocks = result.calendarBlocks;
     renderSavedList();
   });
 
@@ -917,10 +895,26 @@ if (importBtn) {
     try {
       const result = await loadSchedule(currentTerm);
       if (result.stale) return;
-      if (!result.hadRegistrationRows && !result.fromDiskCache) { resetBtn = false; importBtn.textContent = "Waiting for login..."; addMessage("system", "Opening TXST login — sign in to load your registration."); chrome.runtime.sendMessage({ action: "openLoginPopup" }); attachImportLoginListener(importBtn, importSvg); return; }
+      if (result.authRequired || (!result.hadRegistrationRows && !result.fromDiskCache)) { resetBtn = false; importBtn.textContent = "Waiting for login..."; addMessage("system", "Opening TXST login — sign in to load your registration."); chrome.runtime.sendMessage({ action: "openLoginPopup" }); attachImportLoginListener(importBtn, importSvg); return; }
     } finally { if (resetBtn) { importBtn.disabled = false; importBtn.classList.remove("loading"); importBtn.innerHTML = importSvg; } }
   });
 }
+
+// ============================================================
+// CALENDAR ZOOM (Fix 6)
+// ============================================================
+function applyZoom() {
+  document.documentElement.style.setProperty("--cell-h", PX_PER_HOUR + "px");
+  renderCalendarFromWorkingCourses();
+  const zoomOut = document.getElementById("zoomOut");
+  const zoomIn = document.getElementById("zoomIn");
+  if (zoomOut) zoomOut.disabled = PX_STEPS.indexOf(PX_PER_HOUR) <= 0;
+  if (zoomIn) zoomIn.disabled = PX_STEPS.indexOf(PX_PER_HOUR) >= PX_STEPS.length - 1;
+}
+const zoomOut = document.getElementById("zoomOut");
+const zoomIn = document.getElementById("zoomIn");
+if (zoomOut) zoomOut.addEventListener("click", () => { const i = PX_STEPS.indexOf(PX_PER_HOUR); if (i > 0) { PX_PER_HOUR = PX_STEPS[i - 1]; applyZoom(); } });
+if (zoomIn) zoomIn.addEventListener("click", () => { const i = PX_STEPS.indexOf(PX_PER_HOUR); if (i < PX_STEPS.length - 1) { PX_PER_HOUR = PX_STEPS[i + 1]; applyZoom(); } });
 
 // ============================================================
 // SAML / getCurrentSchedule
@@ -956,8 +950,22 @@ async function submitFirstFormFromHtml(htmlText, baseHref) {
 
 async function resolveRegistrationHtmlToJson(initialText, baseHref) {
   let text = initialText, samlHops = 0;
-  while (!registrationResponseLooksLikeJson(text) && samlHops < 8) { const next = await submitFirstFormFromHtml(text, baseHref); if (!next) break; text = next; samlHops++; }
-  return { text, samlHops };
+  let authRequired = false;
+  while (!registrationResponseLooksLikeJson(text) && samlHops < 8) {
+    const next = await submitFirstFormFromHtml(text, baseHref);
+    if (next === null) {
+      // A failed hop while inside a SAML chain means the session is expired and
+      // the IdP/SP POST was blocked in the extension context. Flag auth required
+      // so callers can immediately open the login popup instead of retrying.
+      if (samlHops > 0 || /SAMLRequest|SAMLResponse|RelayState/i.test(text)) {
+        authRequired = true;
+      }
+      break;
+    }
+    text = next;
+    samlHops++;
+  }
+  return { text, samlHops, authRequired };
 }
 
 let registrationFetchQueue = Promise.resolve();
@@ -965,6 +973,12 @@ function queueRegistrationFetch(fn) {
   const task = registrationFetchQueue.then(fn, fn);
   registrationFetchQueue = task.then(() => {}, () => {});
   return task;
+}
+
+// Sentinel error thrown (not returned) so the retry loop in loadSchedule can
+// distinguish "auth expired" from a transient Banner session warmup failure.
+class AuthRequiredError extends Error {
+  constructor() { super("AUTH_REQUIRED"); this.name = "AuthRequiredError"; }
 }
 
 function getCurrentSchedule(term) {
@@ -976,10 +990,14 @@ function getCurrentSchedule(term) {
       let text = await response.text();
       const eventsBase = "https://reg-prod.ec.txstate.edu/StudentRegistrationSsb/ssb/classRegistration/getRegistrationEvents";
       const resolved = await resolveRegistrationHtmlToJson(text, eventsBase);
+      if (resolved.authRequired) throw new AuthRequiredError();
       text = resolved.text;
       if (!registrationResponseLooksLikeJson(text)) return null;
       return JSON.parse(text);
-    } catch (e) { return null; }
+    } catch (e) {
+      if (e instanceof AuthRequiredError) throw e; // propagate — don't swallow
+      return null;
+    }
   });
 }
 
@@ -1015,13 +1033,27 @@ async function loadSchedule(term) {
   $("statusBar").textContent = "Loading schedule...";
 
   let fromDiskCache = false;
-  let data = await getCurrentSchedule(term);
+  let authRequired = false;
+  let data = null;
+  try {
+    data = await getCurrentSchedule(term);
+  } catch (e) {
+    if (e instanceof AuthRequiredError) authRequired = true;
+  }
   if (fetchGen !== scheduleFetchGeneration) return { stale: true, hadRegistrationRows: false, fromDiskCache: false, fetchOk: false };
-  if (data === null) {
-    for (let i = 0; i < 16; i++) {
+  // Retry up to 2×  for legitimate Banner session-warmup failures (not auth expiry).
+  // The old loop was 16 iterations: on expired auth each call triggered the full
+  // SAML chain, producing 17+ identical IdP POST requests before surfacing the
+  // login prompt. We now bail immediately on AuthRequiredError.
+  if (!authRequired && data === null) {
+    for (let i = 0; i < 2; i++) {
       await waitAnimationFrames(2);
       if (fetchGen !== scheduleFetchGeneration) return { stale: true, hadRegistrationRows: false, fromDiskCache: false, fetchOk: false };
-      data = await getCurrentSchedule(term);
+      try {
+        data = await getCurrentSchedule(term);
+      } catch (e) {
+        if (e instanceof AuthRequiredError) { authRequired = true; break; }
+      }
       if (fetchGen !== scheduleFetchGeneration) return { stale: true, hadRegistrationRows: false, fromDiskCache: false, fetchOk: false };
       if (data !== null) break;
     }
@@ -1039,7 +1071,9 @@ async function loadSchedule(term) {
     cachedRegisteredTerm = term;
     const { registered, locks } = buildRegisteredCoursesFromEvents(data);
     lockedCrns = locks;
-    workingCourses = [...registered, ...workingCourses.filter((c) => c.source !== "registered")];
+    // Viewing a Banner plan: switch back to registered view and don't merge plan courses in
+    if (activeScheduleKey.startsWith("banner:")) activeScheduleKey = "registered";
+    workingCourses = [...registered, ...workingCourses.filter((c) => c.source !== "registered" && c.source !== "banner")];
 
     // Register modal metadata for registered courses
     const mergedByCrn = groupRegistrationEventsByCrn(data);
@@ -1050,6 +1084,7 @@ async function loadSchedule(term) {
     });
 
     renderCalendarFromWorkingCourses();
+    renderSavedList();
     updateWeekHours(data);
     updateOverviewFromEvents(data);
     const unique = new Set(data.map((e) => e.crn));
@@ -1059,14 +1094,17 @@ async function loadSchedule(term) {
     return { stale: false, hadRegistrationRows: true, fromDiskCache, fetchOk: true };
   } else if (data === null) {
     cachedRegisteredCourses = []; cachedRegisteredTerm = term;
-    buildEmptyCalendar(); $("statusBar").textContent = "Could not reach registration data. Try Import Schedule again.";
-    addScheduleRefreshPrompt();
-    return { stale: false, hadRegistrationRows: false, fromDiskCache, fetchOk: false };
+    buildEmptyCalendar();
+    $("statusBar").textContent = authRequired
+      ? "Session expired — click Import Schedule to log back in."
+      : "Could not reach registration data. Try Import Schedule again.";
+    if (!authRequired) addScheduleRefreshPrompt();
+    return { stale: false, hadRegistrationRows: false, fromDiskCache, fetchOk: false, authRequired };
   } else {
     removeExistingScheduleRefreshPrompts();
     cachedRegisteredCourses = []; cachedRegisteredTerm = term;
     buildEmptyCalendar(); $("statusBar").textContent = "No registered courses for this term";
-    return { stale: false, hadRegistrationRows: false, fromDiskCache: false, fetchOk: true };
+    return { stale: false, hadRegistrationRows: false, fromDiskCache: false, fetchOk: true, authRequired: false };
   }
 }
 
@@ -1088,6 +1126,7 @@ function addToWorkingSchedule(entry) {
   workingCourses = workingCourses.filter((c) => String(c.crn) !== crn);
   workingCourses.push({ ...entry, crn });
   renderCalendarFromWorkingCourses();
+  updateWeekHoursFromWorking();
   updateSaveBtn();
 }
 
@@ -1096,6 +1135,7 @@ function removeFromWorkingSchedule(crn) {
   workingCourses = workingCourses.filter((c) => String(c.crn) !== k);
   lockedCrns.delete(k);
   renderCalendarFromWorkingCourses();
+  updateWeekHoursFromWorking();
   updateSaveBtn();
 }
 
@@ -1259,6 +1299,49 @@ function renderCalendarFromWorkingCourses() {
       cell.appendChild(block);
     }
   }
+
+  // ── Calendar blocks (work, gym, etc.) — rendered after course blocks.
+  // z-index 0 keeps them behind course blocks; the X button overrides pointer-events.
+  const dayMapB = { Mon: 0, Tue: 1, Wed: 2, Thu: 3, Fri: 4 };
+  for (const block of calendarBlocks) {
+    const startH = parseInt((block.start || "0000").slice(0, 2), 10);
+    const startM = parseInt((block.start || "0000").slice(2, 4), 10);
+    const endH   = parseInt((block.end   || "0000").slice(0, 2), 10);
+    const endM   = parseInt((block.end   || "0000").slice(2, 4), 10);
+    const topOffset = (startM / 60) * PX_PER_HOUR;
+    const blockH    = (endH + endM / 60 - (startH + startM / 60)) * PX_PER_HOUR;
+    if (blockH <= 0) continue;
+    // Only the first day column gets the X button so there's no duplicate click target.
+    const days = (block.days || []);
+    days.forEach((day, dayLoopIdx) => {
+      const dayIdx = dayMapB[day];
+      if (dayIdx === undefined) return;
+      const cell = $("cell-" + dayIdx + "-" + startH);
+      if (!cell) return;
+      const el = document.createElement("div");
+      el.className = "calendar-block";
+      el.style.top    = topOffset + "px";
+      el.style.height = blockH    + "px";
+      const labelSpan = document.createElement("span");
+      labelSpan.className = "block-label-text";
+      labelSpan.textContent = block.label || "";
+      el.appendChild(labelSpan);
+      if (dayLoopIdx === 0) {
+        const xBtn = document.createElement("button");
+        xBtn.className = "block-remove-x";
+        xBtn.setAttribute("aria-label", "Remove " + (block.label || "block"));
+        xBtn.textContent = "×";
+        xBtn.addEventListener("click", (e) => { e.stopPropagation(); removeCalendarBlock(block.label); });
+        el.appendChild(xBtn);
+      }
+      cell.appendChild(el);
+    });
+  }
+
+  // Keep AI toolbar lock count in sync
+  renderAIToolbar();
+  // Conflict check deferred so it always wins over any status messages set by callers
+  setTimeout(updateConflictStatus, 0);
 }
 
 // ============================================================
@@ -1446,8 +1529,11 @@ function renderEligibleList() {
   const seenKeys = new Set();
   const dedupedCourses = eligibleCourses.filter((course) => { const k = course.subject + "-" + course.courseNumber; if (seenKeys.has(k)) return false; seenKeys.add(k); return true; });
 
+  // openSection can be true even when seatsAvailable === 0 (admin-open, waitlisted, etc.)
+  // Require both flags so only sections with actual seats pass the filter.
+  const hasRealOpenSeat = (s) => s.openSection && (s.seatsAvailable == null || s.seatsAvailable > 0);
   const filteredCourses = showOpenSeatsOnly
-    ? dedupedCourses.filter((course) => (course.sections || []).some((s) => s.openSection))
+    ? dedupedCourses.filter((course) => (course.sections || []).some(hasRealOpenSeat))
     : dedupedCourses;
 
   if (status) {
@@ -1465,7 +1551,7 @@ function renderEligibleList() {
 
   filteredCourses.forEach((course) => {
     const key = course.subject + "-" + course.courseNumber;
-    const openCount = (course.sections || []).filter((s) => s.openSection).length;
+    const openCount = (course.sections || []).filter(hasRealOpenSeat).length;
     const totalCount = (course.sections || []).length;
     const alreadyAdded = workingCourses.some((c) => c.subject === course.subject && c.courseNumber === course.courseNumber && c.source !== "registered");
     const item = document.createElement("div");
@@ -1482,35 +1568,41 @@ function renderEligibleList() {
       const courseTitle = course.sections[0]?.courseTitle?.replace(/&amp;/g, "&")?.replace(/&#39;/g, "'") || "";
       if (courseTitle) { const titleEl = document.createElement("div"); titleEl.className = "eligible-course-title"; titleEl.textContent = courseTitle; body.appendChild(titleEl); }
       const seenCrns = new Set();
-      const sections = (course.sections || []).filter((s) => { const crn = String(s.courseReferenceNumber || ""); if (!crn || seenCrns.has(crn)) return false; seenCrns.add(crn); return true; });
-      const currentIdx = selectedSectionByCourse[key] ?? 0;
-      sections.forEach((s, i) => {
-        const lbl = document.createElement("label");
-        lbl.className = "manual-result-row";
-        lbl.innerHTML = '<input type="radio" name="sec-' + key + '" data-idx="' + i + '" ' + (i === currentIdx ? "checked" : "") + "> " + formatSectionOneLine(s);
-        lbl.querySelector("input").addEventListener("change", () => { selectedSectionByCourse[key] = i; });
-        body.appendChild(lbl);
-      });
-      const addBtn = document.createElement("button");
-      addBtn.type = "button"; addBtn.className = "manual-small-btn"; addBtn.style.marginTop = "4px";
-      addBtn.textContent = alreadyAdded ? "Replace on calendar" : "Add to calendar";
-      addBtn.addEventListener("click", () => {
-        const idx = selectedSectionByCourse[key] ?? 0, section = sections[idx];
-        if (!section) return;
-        const crn = String(section.courseReferenceNumber || "");
-        if (!crn) { $("statusBar").textContent = "Section has no CRN."; return; }
-        const mt = section.meetingsFaculty?.[0]?.meetingTime;
-        const days = [];
-        if (mt?.monday) days.push("Mon"); if (mt?.tuesday) days.push("Tue"); if (mt?.wednesday) days.push("Wed"); if (mt?.thursday) days.push("Thu"); if (mt?.friday) days.push("Fri");
-        const beginTime = mt?.beginTime ? mt.beginTime.slice(0, 2) + ":" + mt.beginTime.slice(2) : null;
-        const endTime = mt?.endTime ? mt.endTime.slice(0, 2) + ":" + mt.endTime.slice(2) : null;
-        addToWorkingSchedule({ crn, subject: course.subject, courseNumber: course.courseNumber, title: section.courseTitle || course.sections[0]?.courseTitle || "", days, beginTime, endTime, source: "manual", online: section.instructionalMethod === "INT" });
-        expandedCourseKey = null;
-        $("statusBar").textContent = "Added " + course.subject + " " + course.courseNumber + " to calendar.";
-        renderEligibleList(); updateSaveBtn();
-      });
-      body.appendChild(addBtn);
-      item.appendChild(body);
+      let sections = (course.sections || []).filter((s) => { const crn = String(s.courseReferenceNumber || ""); if (!crn || seenCrns.has(crn)) return false; seenCrns.add(crn); return true; });
+      // Only show sections with actual open seats (openSection alone isn't enough)
+      if (showOpenSeatsOnly) sections = sections.filter(hasRealOpenSeat);
+      if (!sections.length) { expandedCourseKey = null; }
+      else {
+        sections.forEach((s) => {
+          const crn = String(s.courseReferenceNumber || "");
+          const isOnCalendar = workingCourses.some((c) => String(c.crn) === crn);
+          // Fix 3: click-to-toggle row — no radio buttons, no Add button
+          const row = document.createElement("div");
+          row.className = "section-toggle-row" + (isOnCalendar ? " on-calendar" : "") + (!hasRealOpenSeat(s) ? " no-seats" : "");
+          const check = document.createElement("span");
+          check.className = "section-check";
+          check.textContent = isOnCalendar ? "✓" : "";
+          const info = document.createElement("span");
+          info.textContent = formatSectionOneLine(s);
+          row.appendChild(check); row.appendChild(info);
+          row.addEventListener("click", () => {
+            if (isOnCalendar) {
+              removeFromWorkingSchedule(crn);
+            } else {
+              const mt = s.meetingsFaculty?.[0]?.meetingTime;
+              const days = [];
+              if (mt?.monday) days.push("Mon"); if (mt?.tuesday) days.push("Tue"); if (mt?.wednesday) days.push("Wed"); if (mt?.thursday) days.push("Thu"); if (mt?.friday) days.push("Fri");
+              const beginTime = mt?.beginTime ? mt.beginTime.slice(0, 2) + ":" + mt.beginTime.slice(2) : null;
+              const endTime = mt?.endTime ? mt.endTime.slice(0, 2) + ":" + mt.endTime.slice(2) : null;
+              addToWorkingSchedule({ crn, subject: course.subject, courseNumber: course.courseNumber, title: s.courseTitle || course.sections[0]?.courseTitle || "", days, beginTime, endTime, source: "manual", online: s.instructionalMethod === "INT" });
+              expandedCourseKey = null;
+            }
+            renderEligibleList(); updateSaveBtn();
+          });
+          body.appendChild(row);
+        });
+        item.appendChild(body);
+      }
     }
     list.appendChild(item);
   });
@@ -1585,7 +1677,13 @@ function renderSavedList() {
     const key = "saved:" + i;
     const item = document.createElement("div");
     item.className = "saved-item" + (activeScheduleKey === key ? " active" : "");
-    item.innerHTML = '<span class="name">' + schedule.name + "</span>" + '<span class="info">' + schedule.courses.length + " courses</span>" + '<span class="delete-btn" data-key="' + key + '" data-idx="' + i + '">×</span>';
+    const courses = schedule.courses || [];
+    const totalCredits = courses.reduce((sum, c) => sum + (c.credits || 3), 0);
+    const pillLabels = courses.slice(0, 3).map((c) => '<span class="sched-pill">' + (c.course || ((c.subject || "") + " " + (c.courseNumber || ""))).trim() + "</span>").join("");
+    const overflowPill = courses.length > 3 ? '<span class="sched-pill-more">+' + (courses.length - 3) + "</span>" : "";
+    item.innerHTML =
+      '<div class="sched-item-top"><span class="name">' + schedule.name + '</span><div class="sched-item-actions"><span class="info">' + totalCredits + ' cr</span><span class="delete-btn" data-key="' + key + '" data-idx="' + i + '">×</span></div></div>' +
+      (courses.length ? '<div class="sched-pills">' + pillLabels + overflowPill + "</div>" : "");
     item.addEventListener("click", (e) => { if (e.target.classList.contains("delete-btn")) return; bumpScheduleViewGeneration(); activeScheduleKey = key; renderSavedScheduleOnCalendar(schedule); renderSavedList(); });
     list.appendChild(item);
   });
@@ -1595,7 +1693,12 @@ function renderSavedList() {
     const key = "banner:" + pi;
     const item = document.createElement("div");
     item.className = "saved-item" + (activeScheduleKey === key ? " active" : "");
-    item.innerHTML = '<span class="banner-badge">TXST</span><span class="name">' + plan.name + "</span>" + '<span class="delete-btn txst-delete" title="Delete from TXST">×</span>';
+    const pc = plan.planCourses || [];
+    const planPillLabels = pc.slice(0, 3).map((c) => '<span class="sched-pill">' + ((c.subject || "") + " " + (c.courseNumber || "")).trim() + "</span>").join("");
+    const planOverflow = pc.length > 3 ? '<span class="sched-pill-more">+' + (pc.length - 3) + "</span>" : "";
+    item.innerHTML =
+      '<div class="sched-item-top"><span><span class="banner-badge">TXST</span><span class="name">' + plan.name + '</span></span><span class="delete-btn txst-delete" title="Delete from TXST">×</span></div>' +
+      (pc.length ? '<div class="sched-pills">' + planPillLabels + planOverflow + "</div>" : "");
     item.querySelector(".txst-delete").addEventListener("click", async (e) => {
       e.stopPropagation();
       if (!confirm('Delete "' + plan.name + '" from TXST?')) return;
@@ -1623,12 +1726,18 @@ function renderSavedList() {
           const crn = String(event.crn || "");
           const existing = acc.find((c) => c.crn === crn);
           const dayNames = ["Mon", "Tue", "Wed", "Thu", "Fri"];
-          const start = new Date(event.start), dayIdx = start.getDay() - 1;
-          const day = dayIdx >= 0 && dayIdx <= 4 ? dayNames[dayIdx] : null;
-          const bh = start.getHours(), bm = start.getMinutes();
-          const end = new Date(event.end), eh = end.getHours(), em = end.getMinutes();
+          let day = null, beginTime = "", endTime = "";
+          if (event.start && event.end) {
+            const start = new Date(event.start), dayIdx = start.getDay() - 1;
+            day = dayIdx >= 0 && dayIdx <= 4 ? dayNames[dayIdx] : null;
+            const bh = start.getHours(), bm = start.getMinutes();
+            const end = new Date(event.end), eh = end.getHours(), em = end.getMinutes();
+            beginTime = String(bh).padStart(2,"0") + ":" + String(bm).padStart(2,"0");
+            endTime = String(eh).padStart(2,"0") + ":" + String(em).padStart(2,"0");
+          }
+          const isOnline = !!(event.online || !event.start);
           if (existing) { if (day && !existing.days.includes(day)) existing.days.push(day); }
-          else acc.push({ crn, subject: event.subject || "", courseNumber: event.courseNumber || "", title: event.title || "", days: day ? [day] : [], beginTime: String(bh).padStart(2,"0") + ":" + String(bm).padStart(2,"0"), endTime: String(eh).padStart(2,"0") + ":" + String(em).padStart(2,"0"), source: "banner", online: false });
+          else acc.push({ crn, subject: event.subject || "", courseNumber: event.courseNumber || "", title: event.title || "", days: day ? [day] : [], beginTime, endTime, source: "banner", online: isOnline });
           return acc;
         }, []);
         if (viewGen !== scheduleViewGeneration) return;
@@ -1677,11 +1786,79 @@ function renderSavedScheduleOnCalendar(schedule) {
 }
 
 // ============================================================
+// AI TOOLBAR — lock-all shortcut
+// ============================================================
+
+function renderAIToolbar() {
+  const hintEl = $("aiToolbarHint");
+  const btn = $("aiLockAllBtn");
+  if (!hintEl || !btn) return;
+
+  const total = workingCourses.length;
+  const locked = workingCourses.filter((c) => lockedCrns.has(String(c.crn))).length;
+  const allLocked = total > 0 && locked === total;
+
+  if (total === 0) {
+    hintEl.textContent = "Add courses in Build mode so the AI can see them";
+    btn.disabled = true;
+  } else if (allLocked) {
+    hintEl.textContent = "All " + total + " course" + (total !== 1 ? "s" : "") + " locked — AI can see them";
+    btn.disabled = true;
+  } else {
+    const unlocked = total - locked;
+    hintEl.textContent = locked > 0 ? locked + "/" + total + " locked" : unlocked + " unlocked course" + (unlocked !== 1 ? "s" : "") + " — AI won't see them";
+    btn.disabled = false;
+  }
+}
+
+$("aiLockAllBtn")?.addEventListener("click", () => {
+  for (const c of workingCourses) lockedCrns.add(String(c.crn));
+  renderCalendarFromWorkingCourses();
+  addMessage("system", lockedCrns.size + " course" + (lockedCrns.size !== 1 ? "s" : "") + " locked. The AI can now see your full schedule.");
+});
+
+// ============================================================
 // CHAT (AI mode)
 // ============================================================
 
 $("chatSend").addEventListener("click", sendChat);
 $("chatInput").addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendChat(); } });
+
+// Estimate total credits for locked courses.
+// Most TXST courses are 3 credits; we default to 3 for any locked course whose
+// section data isn't in cachedRawData, then correct if we find the exact value.
+function getLockedCredits(lockedList) {
+  let total = 0;
+  for (const locked of lockedList) {
+    let found = false;
+    if (cachedRawData && cachedRawData.eligible) {
+      for (const course of cachedRawData.eligible) {
+        const sec = (course.sections || []).find((s) => String(s.courseReferenceNumber) === String(locked.crn));
+        if (sec) { total += sec.creditHourLow ?? 3; found = true; break; }
+      }
+    }
+    if (!found) total += 3;
+  }
+  return total;
+}
+
+// Persist and re-render calendar blocks whenever they change.
+function applyNewCalendarBlocks(incoming) {
+  if (!incoming || !incoming.length) return;
+  calendarBlocks = mergeCalendarBlocks(calendarBlocks, incoming);
+  chrome.storage.local.set({ calendarBlocks });
+  // Keep student profile in sync so the next AI call sees the updated blocks.
+  if (studentProfile) studentProfile.calendarBlocks = calendarBlocks;
+  renderCalendarFromWorkingCourses();
+}
+
+// Remove a single calendar block by label and re-render.
+function removeCalendarBlock(label) {
+  calendarBlocks = calendarBlocks.filter((b) => b.label.toLowerCase() !== (label || "").toLowerCase());
+  chrome.storage.local.set({ calendarBlocks });
+  if (studentProfile) studentProfile.calendarBlocks = calendarBlocks;
+  renderCalendarFromWorkingCourses();
+}
 
 async function sendChat() {
   const input = $("chatInput").value.trim();
@@ -1706,16 +1883,34 @@ async function sendChat() {
   $("statusBar").textContent = "Thinking...";
   try {
     const isFirstTurn = conversationHistory.length === 0;
+    const lockedList   = getLockedForLLM();
+    const lockedCredits = getLockedCredits(lockedList);
+    const maxNew        = Math.max(0, 18 - lockedCredits);
+
+    // Build dynamic system prompt with the live student profile and credit budget.
+    const profile = studentProfile || buildStudentProfile({
+      name: currentStudent?.name || "Student",
+      major: (currentStudent?.major || "") + (currentStudent?.degree ? " — " + currentStudent.degree : ""),
+      classification: currentStudent?.classification || "Unknown",
+      catalogYear: new Date().getFullYear(),
+      completedHours: null, remainingHours: null,
+      calendarBlocks,
+    });
+    const systemPrompt = buildSystemPrompt(profile, [], lockedCredits);
+
     let userMessage;
     if (isFirstTurn) {
-      const compressed = compressForLLM(cachedRawData);
-      const lockedList = getLockedForLLM();
-      const preFiltered = applyPreFilter(compressed, lockedList);
-      const lockedBlock = lockedList.length > 0 ? `ALREADY LOCKED (treat as fixed — build around these, never conflict with them):\n${JSON.stringify(lockedList)}\n\n` : "";
+      const compressed  = compressForLLM(cachedRawData);
+      const preFiltered = applyPreFilter(compressed, lockedList, calendarBlocks);
+      const lockedBlock = lockedList.length > 0
+        ? `LOCKED COURSES — ${lockedCredits} credits — ALREADY ON CALENDAR, do NOT include in courses[]:\n${JSON.stringify(lockedList)}\n\n`
+          + `CREDIT BUDGET: ${lockedCredits} locked + max ${maxNew} new = 18 total cap.\n\n`
+        : "";
       userMessage = `${lockedBlock}ELIGIBLE COURSES TO SCHEDULE:\n${JSON.stringify(preFiltered)}\n\nMy preferences: ${input}`;
     } else {
-      const lockedList = getLockedForLLM();
-      const lockedNote = lockedList.length > 0 ? `[Still locked: ${lockedList.map((c) => c.course + " CRN " + c.crn).join(", ")}]\n\n` : "";
+      const lockedNote = lockedList.length > 0
+        ? `[Locked (${lockedCredits} cr): ${lockedList.map((c) => c.course + " CRN " + c.crn).join(", ")} — credit budget remaining: ${maxNew} cr]\n\n`
+        : "";
       userMessage = lockedNote + input;
     }
     conversationHistory.push({ role: "user", content: userMessage });
@@ -1723,6 +1918,7 @@ async function sendChat() {
     let validSchedules = [], attempts = 0;
     const MAX_ATTEMPTS = 3;
     let lastConflictDetails = [];
+    let finalResult = null;
 
     while (validSchedules.length === 0 && attempts < MAX_ATTEMPTS) {
       attempts++;
@@ -1731,46 +1927,114 @@ async function sendChat() {
         conversationHistory.push({ role: "user", content: `Your previous schedules had time conflicts. Regenerate all 3 fixing: ${conflictDetails}. Double-check every pair of in-person sections that share any day.` });
         $("statusBar").textContent = `Fixing conflicts (attempt ${attempts})...`;
       }
-      const response = await fetch("https://api.openai.com/v1/chat/completions", { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${openaiKey}` }, body: JSON.stringify({ model: "gpt-4o", response_format: { type: "json_object" }, messages: [{ role: "system", content: SCHEDULE_SYSTEM_PROMPT }, ...conversationHistory] }) });
+      const response = await fetch("https://api.openai.com/v1/chat/completions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${openaiKey}` },
+        body: JSON.stringify({ model: "gpt-4o", response_format: { type: "json_object" }, messages: [{ role: "system", content: systemPrompt }, ...conversationHistory] }),
+      });
       const data = await response.json();
       if (data.error) throw new Error(data.error.message);
       const result = JSON.parse(data.choices[0].message.content);
       conversationHistory.push({ role: "assistant", content: data.choices[0].message.content });
+      finalResult = result;
 
-      const conflicted = []; lastConflictDetails = [];
-      for (const schedule of result.schedules) {
-        const conflict = findFirstConflict(schedule.courses);
-        if (conflict) { conflicted.push(schedule.name); lastConflictDetails.push({ name: schedule.name, course1: conflict.a.course, days1: conflict.a.days?.join("/"), start1: conflict.a.start, end1: conflict.a.end, course2: conflict.b.course, days2: conflict.b.days?.join("/"), start2: conflict.b.start, end2: conflict.b.end }); }
-        else validSchedules.push(schedule);
+      // ── Calendar block detection (any mode) ──────────────────────
+      // Only treat a block as "new" if its label isn't already saved. The AI
+      // echoes previously returned blocks in later turns (they're in history),
+      // which would falsely suppress schedules and spam the "blocks saved" notice.
+      const existingLabels = new Set(calendarBlocks.map((b) => b.label.toLowerCase()));
+      const newBlocks = (result.calendarBlocks || []).filter((b) => !existingLabels.has((b.label || "").toLowerCase()));
+      if (newBlocks.length) {
+        applyNewCalendarBlocks(newBlocks);
+        const labels = newBlocks.map((b) => b.label).join(", ");
+        addMessage("system", `Calendar block${newBlocks.length > 1 ? "s" : ""} saved: ${labels}. These times are now blocked on your calendar.`);
       }
-      if (conflicted.length > 0 && validSchedules.length === 0 && attempts < MAX_ATTEMPTS) { $("statusBar").textContent = "Conflicts found, retrying..."; continue; }
-      if (conflicted.length > 0) addMessage("system", `⚠️ ${conflicted.join(", ")} had time conflicts and were removed. Showing ${validSchedules.length} valid schedule(s).`);
-      validSchedules.forEach((s) => addScheduleOption(s));
-      if (validSchedules.length === 0) addMessage("system", "Could not generate conflict-free schedules. Try simplifying your preferences.");
-      if (result.followUpQuestion && validSchedules.length > 0) addMessage("ai", result.followUpQuestion);
+
+      // ── Advisor / mixed: show response text ──────────────────────
+      if (result.response && result.response.trim()) {
+        addMessage("ai", result.response.trim());
+      }
+
+      // ── Scheduler / mixed: validate and render schedules ─────────
+      // IMPORTANT: if new calendar blocks were returned in THIS response, the
+      // eligible course list was already pre-filtered BEFORE we knew about those
+      // blocks, so any schedules the AI returned may conflict with them. Discard
+      // the schedules and prompt the user to re-ask — on the next turn the blocks
+      // will be in calendarBlocks and properly applied to applyPreFilter.
+      const schedules = result.schedules || [];
+      if (schedules.length && newBlocks.length) {
+        const blockSummary = newBlocks.map((b) => `${b.label} (${b.days.join("/")} ${b.start}–${b.end})`).join(", ");
+        addMessage("system", `Blocks saved (${blockSummary}) — they're now on your calendar. The schedules above were built before these constraints were applied and may overlap them. Send your request again and I'll build schedules that avoid these windows.`);
+        // Still break so we don't loop; user re-sends
+        break;
+      }
+
+      if (schedules.length) {
+        const conflicted = []; lastConflictDetails = [];
+        for (const schedule of schedules) {
+          const conflict = findFirstConflict(schedule.courses || []);
+          if (conflict) {
+            conflicted.push(schedule.name);
+            lastConflictDetails.push({ name: schedule.name, course1: conflict.a.course, days1: conflict.a.days?.join("/"), start1: conflict.a.start, end1: conflict.a.end, course2: conflict.b.course, days2: conflict.b.days?.join("/"), start2: conflict.b.start, end2: conflict.b.end });
+          } else {
+            validSchedules.push(schedule);
+          }
+        }
+        if (conflicted.length > 0 && validSchedules.length === 0 && attempts < MAX_ATTEMPTS) {
+          $("statusBar").textContent = "Conflicts found, retrying..."; continue;
+        }
+        if (conflicted.length > 0) addMessage("system", `⚠ ${conflicted.join(", ")} had time conflicts and were removed. Showing ${validSchedules.length} valid schedule(s).`);
+        validSchedules.forEach((s) => addScheduleOption(s));
+        if (validSchedules.length === 0 && schedules.length > 0) addMessage("system", "Could not generate conflict-free schedules. Try simplifying your preferences.");
+      }
+
+      // ── No schedules returned (pure advisor mode) — nothing extra needed
       break;
+    }
+
+    if (finalResult?.followUpQuestion && (validSchedules.length > 0 || finalResult.mode === "advisor")) {
+      addMessage("ai", finalResult.followUpQuestion);
     }
     $("statusBar").textContent = "Ready";
   } catch (err) { console.error(err); addMessage("system", "Something went wrong: " + err.message); $("statusBar").textContent = "Error"; }
 }
 
 function addScheduleOption(schedule) {
-  const { name, rationale, totalCredits, courses } = schedule;
+  const { name, rationale, courses } = schedule;
   const lockedList = getLockedForLLM();
-  const lockedLines = lockedList.map((r) => { const time = r.days?.length ? r.days.join("/") + " " + formatChatTime(r.start) + "–" + formatChatTime(r.end) : "Online"; return '<div style="margin:4px 0;opacity:0.6;border-left:2px solid var(--border);padding-left:6px"><strong>' + r.course + "</strong> — " + (r.title || "") + '<br><span style="font-size:11px">Locked · ' + time + "</span></div>"; }).join("");
-  const courseLines = courses.map((c) => { const time = c.online ? "Online" : (c.days?.join("/") + " " + formatChatTime(c.start) + "–" + formatChatTime(c.end)); return '<div style="margin:4px 0"><strong>' + c.course + "</strong> — " + c.title + '<br><span style="font-size:11px;opacity:0.8">CRN: ' + c.crn + " · " + time + " · " + c.requirementSatisfied + "</span></div>"; }).join("");
+
+  // Compute credits ourselves — don't trust the AI's totalCredits field, which
+  // has proven inaccurate. Locked courses default to 3 cr each (same assumption
+  // as getLockedCredits); new courses use the credits field the AI returned.
+  const lockedCr = getLockedCredits(lockedList);
+  const newCr    = (courses || []).reduce((sum, c) => sum + (typeof c.credits === "number" ? c.credits : 3), 0);
+  const displayCredits = lockedCr + newCr;
+
+  const lockedLines = lockedList.map((r) => {
+    const time = r.days?.length ? r.days.join("/") + " " + formatChatTime(r.start) + "–" + formatChatTime(r.end) : "Online";
+    return '<div style="margin:4px 0;opacity:0.6;border-left:2px solid var(--border);padding-left:6px"><strong>' + r.course + "</strong> — " + (r.title || "") + '<br><span style="font-size:11px">Locked · ' + time + "</span></div>";
+  }).join("");
+  const courseLines = (courses || []).map((c) => {
+    const time = c.online ? "Online" : (c.days?.join("/") + " " + formatChatTime(c.start) + "–" + formatChatTime(c.end));
+    return '<div style="margin:4px 0"><strong>' + c.course + "</strong> — " + c.title + '<br><span style="font-size:11px;opacity:0.8">CRN: ' + c.crn + " · " + time + (c.requirementSatisfied ? " · " + c.requirementSatisfied : "") + "</span></div>";
+  }).join("");
   const div = document.createElement("div");
   div.className = "chat-message ai";
-  div.innerHTML = '<div class="sender">' + name + " · " + totalCredits + " credits</div>" + '<div style="font-size:11px;margin-bottom:8px;opacity:0.85">' + rationale + "</div>" + lockedLines + courseLines + "<br>" + '<button class="save-schedule-btn add-to-calendar-btn">Add to Calendar</button>' + '<button class="save-schedule-btn lock-all-btn" style="margin-left:6px">Lock All</button>';
+  div.innerHTML =
+    '<div class="sender">' + name + " · " + displayCredits + " credits</div>" +
+    '<div style="font-size:11px;margin-bottom:8px;opacity:0.85">' + rationale + "</div>" +
+    lockedLines + courseLines + "<br>" +
+    '<button class="save-schedule-btn add-to-calendar-btn">Add to Calendar</button>' +
+    '<button class="save-schedule-btn lock-all-btn" style="margin-left:6px">Lock All</button>';
   div.querySelector(".add-to-calendar-btn").addEventListener("click", () => {
-    for (const c of courses) {
+    for (const c of (courses || [])) {
       addToWorkingSchedule({ crn: c.crn, subject: c.course.split(" ")[0], courseNumber: c.course.split(" ")[1], title: c.title, days: c.days || [], beginTime: c.start ? c.start.slice(0, 2) + ":" + c.start.slice(2) : null, endTime: c.end ? c.end.slice(0, 2) + ":" + c.end.slice(2) : null, source: "ai", online: c.online || false });
     }
     addMessage("system", name + " added to calendar. Switch to Build mode to lock, remove, or modify courses.");
     updateSaveBtn();
   });
   div.querySelector(".lock-all-btn").addEventListener("click", () => {
-    for (const c of courses) lockedCrns.add(c.crn);
+    for (const c of (courses || [])) lockedCrns.add(c.crn);
     renderCalendarFromWorkingCourses();
     addMessage("system", "All courses in " + name + " locked.");
   });
@@ -1855,6 +2119,27 @@ function applyStudentInfoToUI(student) {
   $("studentName").textContent = student.name + " | " + student.major + " | " + student.degree;
   const ss = document.getElementById("sidebarStudent");
   if (ss) ss.innerHTML = "<strong>" + student.name + "</strong><br>" + student.major + " | " + student.degree;
+
+  // Build rich student profile for the AI advisor.
+  // Fields not available at this point (completedCourses, holds, careerGoals,
+  // advisingNotes) default to placeholders and can be populated later.
+  const earnedH = student.creditsEarnedMajorMinor ?? null;
+  const reqH    = student.creditsRequiredMajorMinor ?? null;
+  studentProfile = buildStudentProfile({
+    name:             student.name,
+    major:            student.major + (student.minor ? " (Minor: " + student.minor + ")" : "")
+                        + (student.degree ? " — " + student.degree : ""),
+    classification:   student.classification || "Unknown",
+    catalogYear:      student.catalogYear    || new Date().getFullYear(),
+    completedHours:   earnedH,
+    remainingHours:   (earnedH != null && reqH != null) ? reqH - earnedH : null,
+    gpa:              student.gpaOverall ?? student.gpaTexasState ?? null,
+    completedCourses: [],   // not available from this endpoint
+    holds:            [],   // not available from this endpoint
+    calendarBlocks,         // loaded from chrome.storage earlier
+    careerGoals:      null, // populated when the student tells the AI
+    advisingNotes:    null,
+  });
 }
 
 // ============================================================
@@ -1867,6 +2152,29 @@ function updateWeekHours(events) {
   if (!el) return;
   el.innerHTML = totalHours > 0 ? "<strong>" + totalHours + " credit hours</strong> this semester" : "";
 }
+
+// Update the credit-hour counter from workingCourses (called after manual add/remove in Build mode).
+function updateWeekHoursFromWorking() {
+  const seen = new Set();
+  let total = 0;
+  for (const c of workingCourses) {
+    const crn = String(c.crn || "");
+    if (!crn || seen.has(crn)) continue;
+    seen.add(crn);
+    let credits = typeof c.credits === "number" ? c.credits : (typeof c.creditHours === "number" ? c.creditHours : null);
+    if (credits == null && cachedRawData?.eligible) {
+      for (const course of cachedRawData.eligible) {
+        const sec = (course.sections || []).find((s) => String(s.courseReferenceNumber) === crn);
+        if (sec) { credits = sec.creditHourLow ?? 3; break; }
+      }
+    }
+    total += credits ?? 3;
+  }
+  const el = $("weekHours");
+  if (!el) return;
+  el.innerHTML = total > 0 ? "<strong>" + total + " credit hours</strong> this semester" : "";
+}
+
 function updateOverviewFromEvents(events) {
   cachedOverviewEvents = events || [];
   renderOverviewPanel();
@@ -1882,6 +2190,50 @@ function toggleOverview() {
 // ============================================================
 // CONFLICT DETECTION
 // ============================================================
+
+/**
+ * Check workingCourses for any time overlap on shared days.
+ * workingCourses use "HH:MM" colon format for beginTime/endTime
+ * (different from LLM courses which use 4-char "HHMM" strings).
+ */
+function detectWorkingConflict() {
+  function toMin(t) {
+    if (!t) return null;
+    const p = t.split(":");
+    return p.length === 2 ? parseInt(p[0]) * 60 + parseInt(p[1]) : null;
+  }
+  for (let i = 0; i < workingCourses.length; i++) {
+    const a = workingCourses[i];
+    const aS = toMin(a.beginTime), aE = toMin(a.endTime);
+    if (!a.days?.length || aS === null || aE === null) continue;
+    for (let j = i + 1; j < workingCourses.length; j++) {
+      const b = workingCourses[j];
+      const bS = toMin(b.beginTime), bE = toMin(b.endTime);
+      if (!b.days?.length || bS === null || bE === null) continue;
+      if (!a.days.some((d) => b.days.includes(d))) continue;
+      if (aS < bE && bS < aE) return { a, b };
+    }
+  }
+  return null;
+}
+
+/** Update status bar with conflict warning, or clear it if no conflicts. */
+function updateConflictStatus() {
+  const bar = $("statusBar");
+  if (!bar) return;
+  const conflict = detectWorkingConflict();
+  if (conflict) {
+    const aCode = (conflict.a.subject || "") + " " + (conflict.a.courseNumber || "");
+    const bCode = (conflict.b.subject || "") + " " + (conflict.b.courseNumber || "");
+    const sharedDays = (conflict.a.days || []).filter((d) => (conflict.b.days || []).includes(d)).join("/");
+    bar.textContent = "⚠ " + aCode.trim() + " overlaps with " + bCode.trim() + (sharedDays ? " on " + sharedDays : "");
+    bar.dataset.conflict = "1";
+  } else if (bar.dataset.conflict === "1") {
+    bar.textContent = "Ready";
+    delete bar.dataset.conflict;
+  }
+}
+
 function timeStrToMinutes(t) { if (!t) return null; return parseInt(t.slice(0, 2)) * 60 + parseInt(t.slice(2)); }
 function formatTime24to12(h, m) { const ampm = h >= 12 ? "PM" : "AM"; const h12 = h > 12 ? h - 12 : h === 0 ? 12 : h; return h12 + ":" + String(m).padStart(2, "0") + " " + ampm; }
 function formatChatTime(t) { if (!t) return ""; return formatTime24to12(parseInt(t.slice(0, 2)), parseInt(t.slice(2))); }
@@ -2024,4 +2376,59 @@ document.addEventListener("DOMContentLoaded", () => {
   }
   if (closeBtn) closeBtn.addEventListener("click", closeModal);
   if (overlay) overlay.addEventListener("click", closeModal);
+});
+
+// ============================================================
+// BLOCK CREATION MODAL
+// ============================================================
+document.addEventListener("DOMContentLoaded", () => {
+  const bOverlay = $("blockModalOverlay");
+  const bModal   = $("blockModal");
+  const bClose   = $("blockModalClose");
+  const bSave    = $("blockSaveBtn");
+  const bAdd     = $("addBlockBtn");
+
+  function openBlockModal() {
+    if (!bModal || !bOverlay) return;
+    // Reset fields
+    const label = $("blockLabelInput");
+    if (label) { label.value = ""; label.focus(); }
+    bModal.querySelectorAll(".block-day input[type='checkbox']").forEach((cb) => { cb.checked = false; });
+    const startEl = $("blockStartInput"), endEl = $("blockEndInput");
+    if (startEl) startEl.value = "17:00";
+    if (endEl)   endEl.value   = "21:00";
+    bModal.classList.add("active");
+    bOverlay.classList.add("active");
+  }
+
+  function closeBlockModal() {
+    if (!bModal || !bOverlay) return;
+    bModal.classList.remove("active");
+    bOverlay.classList.remove("active");
+  }
+
+  if (bAdd)    bAdd.addEventListener("click", openBlockModal);
+  if (bClose)  bClose.addEventListener("click", closeBlockModal);
+  if (bOverlay) bOverlay.addEventListener("click", closeBlockModal);
+
+  if (bSave) {
+    bSave.addEventListener("click", () => {
+      const label = ($("blockLabelInput")?.value || "").trim();
+      if (!label) { $("blockLabelInput")?.focus(); return; }
+      const days = [];
+      bModal.querySelectorAll(".block-day input[type='checkbox']:checked").forEach((cb) => days.push(cb.value));
+      if (!days.length) return;
+      const rawStart = ($("blockStartInput")?.value || "17:00").replace(":", "");
+      const rawEnd   = ($("blockEndInput")?.value   || "21:00").replace(":", "");
+      if (parseInt(rawStart, 10) >= parseInt(rawEnd, 10)) return;
+      applyNewCalendarBlocks([{ label, days, start: rawStart, end: rawEnd }]);
+      closeBlockModal();
+    });
+  }
+
+  // Allow Enter key to save from label input
+  const labelInput = $("blockLabelInput");
+  if (labelInput) {
+    labelInput.addEventListener("keydown", (e) => { if (e.key === "Enter") bSave?.click(); });
+  }
 });

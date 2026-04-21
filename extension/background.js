@@ -948,12 +948,6 @@ async function getAuditData(studentId, school, degree) {
       if (String(rule.percentComplete) === "100") continue;
       if (rule.ruleType !== "Course") continue;
       if (!rule.requirement || !rule.requirement.courseArray) continue;
-      if (
-        rule.classesAppliedToRule &&
-        rule.classesAppliedToRule.classArray &&
-        rule.classesAppliedToRule.classArray.length > 0
-      )
-        continue;
       for (const course of rule.requirement.courseArray) {
         if (course.discipline === "@" || course.number === "@") continue;
         if (course.hideFromAdvice === "Yes") continue;
@@ -2046,10 +2040,11 @@ async function fetchPlanCalendar(term, planCourses) {
 
   // Group planCourses by subject+courseNumber to minimise search calls
   const courseMap = new Map();
+  const noCrnCourses = []; // plan courses with no valid CRN — added as TBA at the end
   for (const course of planCourses) {
     // Banner planCourses may use 'crn' or 'courseReferenceNumber'
     const crn = String(course.courseReferenceNumber || course.crn || "");
-    if (!crn || crn === "0") continue;
+    if (!crn || crn === "0") { noCrnCourses.push(course); continue; }
     const key = (course.subject || "") + "/" + (course.courseNumber || "");
     if (!courseMap.has(key)) {
       courseMap.set(key, {
@@ -2121,11 +2116,29 @@ async function fetchPlanCalendar(term, planCourses) {
       });
       if (!data?.success || !Array.isArray(data.data)) continue;
 
+      const placedCrns = new Set();
       for (const section of data.data) {
         const crn = String(section.courseReferenceNumber || "");
         if (!crns.has(crn)) continue;
         const mt = section.meetingsFaculty?.[0]?.meetingTime;
-        if (!mt?.beginTime || !mt?.endTime) continue;
+        if (!mt?.beginTime || !mt?.endTime) {
+          // Online / arranged section — add once with no time data so it still shows on the plan
+          if (!placedCrns.has(crn)) {
+            placedCrns.add(crn);
+            events.push({
+              ...section,
+              courseReferenceNumber: crn,
+              crn,
+              subject: section.subject || subject,
+              courseNumber: section.courseNumber || courseNumber,
+              title: section.courseTitle || section.courseDescription || section.title || "",
+              start: "",
+              end: "",
+              online: true,
+            });
+          }
+          continue;
+        }
 
         const bh = mt.beginTime.slice(0, 2);
         const bm = mt.beginTime.slice(2);
@@ -2157,12 +2170,42 @@ async function fetchPlanCalendar(term, planCourses) {
             start: ds + "T" + bh + ":" + bm + ":00-0500",
             end: ds + "T" + eh + ":" + em + ":00-0500",
           });
+          placedCrns.add(crn);
         }
+      }
+      // Any CRNs in the plan that weren't found in Banner search results — add as TBA placeholders
+      for (const crn of crns) {
+        if (placedCrns.has(crn)) continue;
+        const pc = planCourses.find((c) => String(c.courseReferenceNumber || c.crn || "") === crn);
+        events.push({
+          courseReferenceNumber: crn,
+          crn,
+          subject: pc?.subject || subject,
+          courseNumber: pc?.courseNumber || courseNumber,
+          title: pc?.courseTitle || pc?.title || "",
+          start: "",
+          end: "",
+          online: true,
+        });
       }
     } catch (e) {
       console.warn("[BobcatPlus] fetchPlanCalendar:", subject, courseNumber, e);
     }
     await new Promise((r) => setTimeout(r, 200));
+  }
+
+  // Add plan courses that had no CRN (added to plan without a specific section)
+  for (const course of noCrnCourses) {
+    events.push({
+      crn: "",
+      courseReferenceNumber: "",
+      subject: course.subject || "",
+      courseNumber: course.courseNumber || "",
+      title: course.courseTitle || course.title || "",
+      start: "",
+      end: "",
+      online: true,
+    });
   }
 
   return events;

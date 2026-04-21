@@ -41,6 +41,42 @@
       </div>
     </div>
 
+    <!-- Block creation modal -->
+    <div class="modal-overlay" id="blockModalOverlay"></div>
+    <div class="modal block-modal" id="blockModal">
+      <button class="modal-close" id="blockModalClose">✕</button>
+      <div class="modal-title" style="padding:18px 18px 0">Add Time Block</div>
+      <div class="modal-body" style="padding:14px 18px 10px;display:flex;flex-direction:column;gap:12px;">
+        <div>
+          <div class="modal-label" style="margin-bottom:5px">Label</div>
+          <input type="text" id="blockLabelInput" class="block-input" placeholder="Work, Gym, Commute…" maxlength="24" />
+        </div>
+        <div>
+          <div class="modal-label" style="margin-bottom:7px">Days</div>
+          <div class="block-days-row">
+            <label class="block-day"><input type="checkbox" value="Mon" /><span>M</span></label>
+            <label class="block-day"><input type="checkbox" value="Tue" /><span>T</span></label>
+            <label class="block-day"><input type="checkbox" value="Wed" /><span>W</span></label>
+            <label class="block-day"><input type="checkbox" value="Thu" /><span>Th</span></label>
+            <label class="block-day"><input type="checkbox" value="Fri" /><span>F</span></label>
+          </div>
+        </div>
+        <div style="display:flex;gap:10px;align-items:center;">
+          <div style="flex:1">
+            <div class="modal-label" style="margin-bottom:5px">Start</div>
+            <input type="time" id="blockStartInput" class="block-input" value="17:00" />
+          </div>
+          <div style="flex:1">
+            <div class="modal-label" style="margin-bottom:5px">End</div>
+            <input type="time" id="blockEndInput" class="block-input" value="21:00" />
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="modal-btn primary" id="blockSaveBtn">Add Block</button>
+      </div>
+    </div>
+
     <!-- Course detail modal (Simone) -->
     <div class="modal-overlay" id="modalOverlay"></div>
     <div class="modal" id="courseModal">
@@ -122,8 +158,16 @@
       <div class="calendar-panel">
         <div class="week-header">
           <div class="week-title">Week at a Glance</div>
-          <div style="display:flex;align-items:center;gap:10px;">
+          <div style="display:flex;align-items:center;gap:8px;">
             <div class="week-hours" id="weekHours"></div>
+            <button class="add-block-btn" id="addBlockBtn" title="Add a blocked time (work, gym, etc.)">
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+              Block
+            </button>
+            <div class="zoom-controls">
+              <button class="zoom-btn" id="zoomOut" title="Zoom out">−</button>
+              <button class="zoom-btn" id="zoomIn" title="Zoom in">+</button>
+            </div>
             <button class="import-btn" id="importBtn" title="Import your schedule from TXST">
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
               Import Schedule
@@ -169,7 +213,13 @@
 
         <!-- AI PANEL -->
         <div class="ai-panel" id="aiPanel" style="display:none;">
-          <div class="chat-header">Schedule Planner</div>
+          <div class="ai-toolbar" id="aiToolbar">
+            <span class="ai-toolbar-hint" id="aiToolbarHint">Lock courses in Build mode so the AI can see them</span>
+            <button class="ai-lock-all-btn" id="aiLockAllBtn" title="Lock all courses currently on the calendar">
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+              Lock all
+            </button>
+          </div>
           <div class="chat-messages" id="chatMessages">
             <div class="chat-message system">
               <div class="sender">System</div>
@@ -192,6 +242,7 @@
     <!-- Script order matters: courseColors before facultyScraper before tab.js -->
     <script src="courseColors.js"></script>
     <script src="facultyScraper.js"></script>
+    <script src="scheduleGenerator.js"></script>
     <script src="tab.js"></script>
   </body>
 </html>

@@ -204,3 +204,37 @@ body {
   object-fit: contain;
   filter: brightness(0) invert(1);
 }
+
+/* ── Dark mode ── */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg:     #1a1816;
+    --surface: #262220;
+    --text:   #f5f2ee;
+    --text2:  #b4aea8;
+    --text3:  #686260;
+    --border: rgba(255, 255, 255, 0.09);
+  }
+
+  .term-select {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23c47878' stroke-width='2'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
+  }
+
+  .mini-calendar {
+    background: rgba(38, 34, 32, 0.90);
+    backdrop-filter: blur(16px) saturate(150%);
+    -webkit-backdrop-filter: blur(16px) saturate(150%);
+  }
+
+  /* Chip colors — lighter for dark bg */
+  .mini-calendar .course-block.chip-0 { background: rgba(80,18,20,0.35); border-color: #b05050; color: #e8a0a0; }
+  .mini-calendar .course-block.chip-1 { background: rgba(38,103,37,0.28); border-color: #4aaa48; color: #8cd48a; }
+  .mini-calendar .course-block.chip-2 { background: rgba(0,112,150,0.28); border-color: #30a8cc; color: #72d4f4; }
+  .mini-calendar .course-block.chip-3 { background: rgba(172,145,85,0.22); border-color: #c9ab6a; color: #ddc080; }
+  .mini-calendar .course-block.chip-4 { background: rgba(65,158,105,0.25); border-color: #5acd8a; color: #7adea0; }
+  .mini-calendar .course-block.chip-5 { background: rgba(112,183,170,0.22); border-color: #80c8bc; color: #98d8cc; }
+  .mini-calendar .course-block.chip-6 { background: rgba(235,186,69,0.18); border-color: #d8b840; color: #e8cc6a; }
+  .mini-calendar .course-block.chip-7 { background: rgba(234,102,77,0.25); border-color: #e8805c; color: #f0a090; }
+
+  .plan-btn:hover { background: #7a2426; }
+}
