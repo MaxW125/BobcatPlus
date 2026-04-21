@@ -2376,17 +2376,27 @@ function addScheduleOption(schedule) {
     lockedLines + courseLines + "<br>" +
     '<button class="save-schedule-btn add-to-calendar-btn">Add to Calendar</button>' +
     '<button class="save-schedule-btn lock-all-btn" style="margin-left:6px">Lock All</button>';
-  div.querySelector(".add-to-calendar-btn").addEventListener("click", () => {
+  div.querySelector(".add-to-calendar-btn").addEventListener("click", (e) => {
     for (const c of courses) {
       addToWorkingSchedule({ crn: c.crn, subject: c.course.split(" ")[0], courseNumber: c.course.split(" ")[1], title: c.title, days: c.days || [], beginTime: c.start ? c.start.slice(0, 2) + ":" + c.start.slice(2) : null, endTime: c.end ? c.end.slice(0, 2) + ":" + c.end.slice(2) : null, source: "ai", online: c.online || false });
     }
-    addMessage("system", label + " added to calendar. Switch to Build mode to lock, remove, or modify courses.");
     updateSaveBtn();
+    // Ack the action on the button itself so the user sees confirmation
+    // without bloating the chat log or yanking the scroll position.
+    const btn = e.currentTarget;
+    const orig = btn.textContent;
+    btn.textContent = "Added";
+    btn.disabled = true;
+    setTimeout(() => { btn.textContent = orig; btn.disabled = false; }, 1800);
   });
-  div.querySelector(".lock-all-btn").addEventListener("click", () => {
+  div.querySelector(".lock-all-btn").addEventListener("click", (e) => {
     for (const c of courses) lockedCrns.add(c.crn);
     renderCalendarFromWorkingCourses();
-    addMessage("system", "All courses in " + label + " locked.");
+    const btn = e.currentTarget;
+    const orig = btn.textContent;
+    btn.textContent = "Locked";
+    btn.disabled = true;
+    setTimeout(() => { btn.textContent = orig; btn.disabled = false; }, 1800);
   });
   $("chatMessages").appendChild(div);
   $("chatMessages").scrollTop = $("chatMessages").scrollHeight;
