@@ -495,6 +495,30 @@ If you don't know how much budget has been used, say so — don't guess.
 It's better to say *"if this chat is getting long, consider a new window
 after this step"* than to invent a percentage.
 
+### Mandatory "Next steps" block on every response
+
+**Every turn must end with a short `### Next steps` block.** Aidan should
+never have to guess what to do after you finish speaking. The block must
+contain, in this order:
+
+1. **Do now (you, Aidan):** one-line concrete action in the current chat
+   or in the browser / terminal — verify a fix, paste a console command,
+   reload the extension, etc. Skip this bullet only if there is
+   genuinely nothing for Aidan to do between turns.
+2. **Next chat opener:** if the current turn ended a logical unit OR the
+   chat is getting long, give the exact paste-ready opener for the new
+   chat, including the `cd` into the worktree. Mark it as Auto or
+   Opus/API per the routing rules above. If the current chat should
+   continue instead of forking, say so explicitly: *"Stay in this chat
+   for the next step."*
+3. **Branch point:** if the next action depends on the outcome of
+   step 1, say what the branches are. Example: *"If the console test
+   works → next chat is `flip solver flag defaults to on`. If it still
+   fails → next chat is `diagnose solver fix with fresh trace dump`."*
+
+Keep the block tight. No more than ~8 lines total. This is not a report
+— it is the receipt Aidan takes to the next chat.
+
 ---
 
 ## Process gates (trimmed 2026-04-21 PM for solo-dev reality; see D10 + D15)
