@@ -113,13 +113,35 @@ the solver's DFS exhausted its 2000-schedule cap along one branch of the
 CS-4371 CRN axis. Growing the cap is a band-aid; fixing ordering and
 hoisting weight-1.0 prefs to hard constraints is the real cure.
 
-**Status.** Diagnosed, not implemented. See
-`docs/bug1-morning-preference-diagnosis.md` for the full trace and
-reproduction steps. Implementation ticket lives in the phase plan as a
-Phase-2 precursor ("Bug 1/3 solver fix").
+**Status.** Shipped 2026-04-21 PM in `5975c90` on branch
+`LLM-algorithm`. Verified live: "no classes before noon, no classes
+friday" on the CS BS audit no longer returns CS 4371 CRN 12118 (9:30 AM)
+in the top-3. Full file-level breakdown in the commit message.
+Landed changes:
 
-**Reversible by.** Flipping the new flag (`bp_phase2_solver_prefordering`)
-off, once the fix ships.
+- Intent-prompt example realignment + `DECLARATIVE_NO_PATTERN` rescue in
+  `calibrateIntentWeights` (bare "no X" → 1.0, hedged phrasings stay
+  soft). Fix 2's trigger now fires for realistic student phrasing.
+- `solveMulti` runs `pref-distance` ordering first when the prefordering
+  flag is on, plus per-pass budget (`SOLVER_RESULT_CAP / passes`) so no
+  single ordering can monopolize the 2000-schedule pool. Closes the
+  live-trace failure mode where MRV-first saturated the cap along one
+  CS 4371 CRN branch.
+- `buildConstraints(prefs, profile, locked, flags)` promotes
+  morningCutoff / lateCutoff / online weights ≥ 1.0 to solver hard
+  constraints (`hardNoEarlierThan`, `hardNoLaterThan`, `hardDropOnline`)
+  when the hardfloor flag is on.
+- `breakdownOf` inverts `onlineTerm` when `preferInPerson` is true, so
+  in-person outranks fully-online under affinity even when hardfloor is
+  not engaged. Closes the `expectedToFail` scoring invariant.
+- 19 new unit tests: 16 end-to-end calibrator → buildConstraints chain
+  cases (positive, negative, hedged, flag-off gating) + 3 solver ordering
+  / budget cases. 98/98 green.
+
+**Reversible by.** Flipping `bp_phase2_solver_prefordering` and/or
+`bp_phase2_solver_hardfloor` to `false` in `chrome.storage.local`
+disables each layer independently — but only until the D17 flag-removal
+commit lands. After that, rollback is `git revert 5975c90`.
 
 ---
 

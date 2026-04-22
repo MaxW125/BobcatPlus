@@ -130,7 +130,7 @@ One function — `BP.handleUserTurn({ userMessage, rawData, studentProfile, ... 
 | `docs/METRICS.md` | Exact formulas for the four Phase-0 scheduler metrics. The acceptance gate for every later phase is written here. |
 | `docs/requirement-graph-rfc.md` | Phase-1 RFC for the `RequirementGraph` node types + DW mapping. Updated 2026-04-21 with the `numberOfGroups`/`numberOfRules` resolution and the many-to-many product decision. |
 | `docs/bug4-eligible-diagnosis.md` | Layered fix plan for Bug 4 (missing eligible courses). Updated 2026-04-21 — wildcard expansion now ships via DegreeWorks `courseInformation`, not Banner subject search. |
-| `docs/bug1-morning-preference-diagnosis.md` | Bug 1 trace analysis + two-layer solver fix plan (2026-04-21 PM). Read this before implementing `bp_phase2_solver_prefordering` / `bp_phase2_solver_hardfloor`. |
+| `docs/bug1-morning-preference-diagnosis.md` | Bug 1 trace analysis + two-layer solver fix plan (2026-04-21 PM). Implementation shipped 2026-04-21 PM in `5975c90`; kept as the historical record of the failure mode. |
 | `docs/decisions.md` | **Running ADR-lite log.** Every locked-in decision (architecture, product, process, phase ordering) lives here with a date and a "reversible by" clause. If you're unsure what we agreed on, read this first. |
 | `docs/advising-flow.md` | Product + reality-check doc for the pre-advising conversational flow and the advisor-facing brief (Phases 4a/4b/5). Captures the 5-question draft and which advisor capabilities are realistic at which phase. |
 
@@ -183,36 +183,41 @@ language.
 5pm" into `noLaterThan: "1700"`. If you find it misses, tighten the prompt
 example in `buildIntentPrompt()`.
 
-### 3. Section-level preference handling — diagnosed 2026-04-21 PM
+### 3. Section-level preference handling — shipped 2026-04-21 PM in `5975c90`
 
-**Status.** Trace captured from real "no classes before noon, no classes
-Friday" run on the CS BS audit. **Root cause confirmed: solver
-enumeration bias, not a scorer gap.** The scorer is already penalizing
-correctly (`morningPen: 0.375` across every top-20 schedule), but
-`solveMulti` exhausts its 2000-schedule cap along a branch that commits
-to CS 4371 CRN 12118 (9:30 AM) before ever attempting CRN for the 12:30 PM
-section. The 12:30 PM schedule would rank #1 on every archetype if it
-made it into the pool — it never does.
+**Status.** ✅ Both layers landed + verified live on the same "no classes
+before noon, no classes Friday" CS BS prompt that produced the original
+trace. Top-3 no longer contains CS 4371 CRN 12118 (9:30 AM). See
+`docs/decisions.md` D14 for the full landing summary and
+`docs/bug1-morning-preference-diagnosis.md` for the historical trace.
 
-See `docs/bug1-morning-preference-diagnosis.md` and `docs/decisions.md`
-D14 for the full trace analysis.
+**What landed:**
 
-**Two-layer fix (deferred to Phase-2 precursor ticket, both flags gated):**
+1. **`bp_phase2_solver_prefordering`** — `pref-distance` ordering runs
+   FIRST in `solveMulti` when the flag is on, so the initial schedules
+   the solver generates honor the active soft prefs. Earlier (5th-pass)
+   wiring was neutralized in production because MRV / reverse-MRV /
+   shuffled passes saturated the 2000-schedule cap first. Each pass
+   now also gets a per-pass budget (`SOLVER_RESULT_CAP / passes`) so no
+   single ordering can monopolize the pool; last pass claims the
+   remainder.
+2. **`bp_phase2_solver_hardfloor`** — when `calibrateIntentWeights`
+   floors a weight at 1.0, `buildConstraints` promotes the matching
+   pref to a solver hard constraint (`hardNoEarlierThan`,
+   `hardNoLaterThan`, `hardDropOnline`). The calibrator itself was
+   the gap: `HARD_PATTERN` alone missed declarative "no classes before
+   noon", so `morningCutoffWeight` stayed at 0.6 and hardfloor never
+   fired. A new `DECLARATIVE_NO_PATTERN` now rescues bare "no X"
+   phrasing. Also unblocks the `preferInPerson` scoring invariant —
+   `breakdownOf` inverts `onlineTerm` when `preferInPerson` is true.
 
-1. **`bp_phase2_solver_prefordering`** — 5th ordering in `solveMulti` that
-   sorts each course's sections ascending by preference-distance. The
-   first schedules the solver generates honor the prefs, so even at the
-   2000 cap the ranker sees them.
-2. **`bp_phase2_solver_hardfloor`** — when `calibrateIntentWeights` floors
-   a soft weight at 1.0 ("no", "cannot", "never"), promote the
-   corresponding pref to a solver hard constraint. Prunes instead of
-   grows the search space. Closes Bug 1 and Bug 3 together and unblocks
-   the `expectedToFail` `preferInPerson` scoring test.
+Both flags are currently default-on. **D17 (flag removal) is queued**
+— rollback becomes `git revert 5975c90` once the flags are stripped.
 
-**Separate concern (also in the diagnosis doc):** when `morningCutoffWeight
-> 0` but `noEarlierThan` is null (fuzzy "don't like early mornings"
-without a specific cutoff), apply a soft monotonic penalty by start time.
-Small scorer tweak, same PR as Fix 1.
+**Separate concern (still open, tracked in the diagnosis doc):** when
+`morningCutoffWeight > 0` but `noEarlierThan` is null (fuzzy "don't like
+early mornings" without a specific cutoff), apply a soft monotonic
+penalty by start time. Small scorer tweak, Phase-2 scope.
 
 ### 4. `removeAvoidDays` / `resetAvoidDays` reliability
 
@@ -358,8 +363,8 @@ after Phase 2 / before Max's refactor.
 | 0 | Instrument the pipeline — metrics, trace payloads, unit harness | ✅ done |
 | 1 | RequirementGraph parser, TXST adapter, compat layer | ✅ wired 2026-04-21 behind `bp_phase1_wiring` (default OFF) + `bp_phase1_shadow` (parity logging). Live `courseInformation` fetcher split to follow-up (see D13). 76 unit tests green. |
 | 1.5 | Solver consumes the graph natively (ChooseN / AllOf / exclusivity / multi-count satisfaction table) | ⬜ not started |
-| 2-precursor | **Bug 1/3 solver fix.** Two gated flags: `bp_phase2_solver_prefordering` (5th pref-biased `solveMulti` ordering) + `bp_phase2_solver_hardfloor` (weight-1.0 soft → solver hard). Diagnosis complete — see `docs/bug1-morning-preference-diagnosis.md`. | ⬜ diagnosed 2026-04-21 PM, implementation ticket ready for a fresh chat |
-| 2 | Scorer fidelity — fuzzy time prefs (weight>0 without `noEarlierThan`), `preferInPerson` scoring term, silent-prefs floor | ⬜ not started. Depends on the Bug 1/3 solver fix landing first so tests can assert behavior end-to-end. |
+| 2-precursor | **Bug 1/3 solver fix.** `bp_phase2_solver_prefordering` (`pref-distance` ordering first in `solveMulti` + per-pass budget) + `bp_phase2_solver_hardfloor` (calibrator `DECLARATIVE_NO_PATTERN` + `buildConstraints` promotes weight-1.0 → hard). | ✅ shipped 2026-04-21 PM in `5975c90`, verified live on "no classes before noon, no classes friday". Flag removal queued as D17. |
+| 2 | Scorer fidelity — fuzzy time prefs (weight>0 without `noEarlierThan`), silent-prefs floor | ⬜ not started. `preferInPerson` scoring term shipped with the 2-precursor commit; remaining scope is the fuzzy/silent cases. |
 | 2.5 | **Prereq awareness within a term.** Solver refuses to propose Calc 2 if Calc 1 is not completed or in-progress. Data source: DW `courseInformation.prerequisites[]`. | ⬜ not started (new phase, see `docs/decisions.md` D8) |
 | 3 | Archetype-seeded ranking (spread / compressed / time-blocked) | ⬜ not started |
 | 4a | Pre-advising conversational flow (5-question, progress bar, schedule hand-off) | ⬜ not started (see `docs/advising-flow.md`) |
@@ -387,11 +392,14 @@ referenced doc, ships the change, updates decisions.md).
 2. ~~**Bug 1 diagnosis.**~~ ✅ Landed 2026-04-21 PM. Real trace captured,
    root cause identified as solver enumeration bias (see
    `docs/bug1-morning-preference-diagnosis.md` and D14).
-3. **Bug 1/3 solver fix.** Implement the two gated flags from D14.
-   Specifically: (a) pref-biased ordering in `solveMulti`, (b) promote
-   weight-1.0 soft prefs to solver hard constraints when user said "no".
-   Also flip the `preferInPerson` `expectedToFail` test in
-   `scoring.test.js` to passing once (b) ships. One fresh chat.
+3. ~~**Bug 1/3 solver fix.**~~ ✅ Landed 2026-04-21 PM in `5975c90`.
+   Pref-distance runs first in `solveMulti` with per-pass budget;
+   calibrator `DECLARATIVE_NO_PATTERN` rescues bare "no X" so hardfloor
+   actually fires; `preferInPerson` `expectedToFail` flipped. Verified
+   live. See D14 for the landing summary.
+3a. **Flag removal (D17, queued).** Strip `bp_phase1_*` + `bp_phase2_*`
+    feature flags from the codebase now that Bug 1/3 is proven. Collapse
+    default-true code paths; rollback becomes commit revert only.
 4. **Capture the `courseInformation` URL → Layer B.** Open DevTools on the
    DW audit page, click a wildcard (e.g. CS 4@), copy the XHR URL. Paste
    it into a new decisions-log entry, then wire
@@ -437,11 +445,10 @@ doc-only updates, any commit-and-push chat.**
 - LLM prompt engineering (intent / affinity / rationale / advisor prompts).
 - Any first-time implementation of a new phase.
 
-Concrete calls in the current plan that justify Opus: **Bug 1/3 solver fix
-(only partially diagnosed — the math is clear but implementation choices
-around ordering heuristics matter), Phase 1.5 graph-aware solver, Phase 2
-scorer fidelity, Phase 5 multi-semester planner, Phase 4a/b advisor
-design.**
+Concrete calls in the current plan that justify Opus: **Phase 1.5
+graph-aware solver, Phase 2 scorer fidelity (fuzzy-time penalties +
+silent-prefs floor), Phase 3 archetype-seeded ranking, Phase 5
+multi-semester planner, Phase 4a/b advisor design.**
 
 ### Recommend starting a **new chat window** when any of:
 
@@ -475,10 +482,9 @@ Example opener:
 > "Good stopping point. In a new chat, paste:
 > *cd `/Users/aidanvickers/Desktop/BobcatPlus/.claude/worktrees/flamboyant-hodgkin-1ae885`
 > and confirm `git branch --show-current` prints `LLM-algorithm`. Then
-> read `HANDOFF.md` and `docs/bug1-morning-preference-diagnosis.md`, and
-> implement the Bug 1/3 solver fix behind `bp_phase2_solver_prefordering`
-> + `bp_phase2_solver_hardfloor`.* That fresh session will start at ~2%
-> per turn instead of whatever this one is at now."
+> read `HANDOFF.md` + the diagnosis doc for the task at hand, and
+> implement the next step in the `Next action` list.* That fresh session
+> will start at ~2% per turn instead of whatever this one is at now."
 
 ### When NOT to switch (avoid cargo-culting this):
 
@@ -547,6 +553,12 @@ would the LLM do wrong here?" checklist (folded into gate 1), weekly log
 
 ## Recent commit history (branch: LLM-algorithm)
 
+- `5975c90` — Bug 1/3 solver + calibrator fix (declarative-no rescue, pref-distance first, per-pass budget, hardfloor promotion, preferInPerson scorer inversion); 98 unit tests green, verified live
+- `2b07036` — HANDOFF: require mandatory Next steps block on every AI response
+- `24b1ce7` — HANDOFF + decisions log (D1-D16) + Bug 1 diagnosis + advising flow
+- `76abc17` — Phase-1 wiring: feature-flag RequirementGraph + Bug 4 audit diagnostics
+- `0cbceb6` — Phase-1 offline: RequirementGraph parser + wildcard normalizer + baseline
+- `fda436e` — Phase-0: instrument scheduler + ship test harness + fix Bug 5 (online conflicts)
 - `8e49fa8` — Enforce noLaterThan in scorer + calibrator (this handoff)
 - `88dcdce` — Positive day framing + avoid-day removal/reset
 - `62722e2` — Fix day-balance scorer + Jaccard<1.0 fallback tier
