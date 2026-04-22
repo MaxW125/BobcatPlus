@@ -2088,9 +2088,21 @@ function createThinkingPanel() {
     const label = STAGE_LABELS[entry.stage] || entry.stage;
     const summary = entry.summary ? " — " + entry.summary : "";
     const dur = entry.duration != null ? ` (${entry.duration}ms)` : "";
-    const html = '<span style="display:inline-block;width:14px">' + statusGlyph(entry.status) + "</span>"
+    let html = '<span style="display:inline-block;width:14px">' + statusGlyph(entry.status) + "</span>"
       + "<strong>" + label + "</strong>" + summary + dur
       + (entry.error ? '<br><span style="color:#c44">' + entry.error + "</span>" : "");
+
+    // Phase 0 debug pane: when the rank stage reports a scoreBreakdown payload,
+    // expose the top-20 candidates and per-vector term weights under a collapsed
+    // <details> block. Intentionally raw — this is a debug surface for diagnosing
+    // why Top-1 beat Top-2, not a polished UI.
+    if (entry.rankBreakdown) {
+      const body = escapeHtml(JSON.stringify(entry.rankBreakdown, null, 2));
+      html += '<details style="margin-top:4px"><summary style="cursor:pointer;font-size:10px;opacity:0.75">rank breakdown (debug)</summary>'
+        + '<pre style="font-size:10px;max-height:320px;overflow:auto;background:#111;color:#ddd;padding:6px;border-radius:4px;white-space:pre-wrap">'
+        + body + "</pre></details>";
+    }
+
     let row = rows.get(entry.stage);
     if (!row) {
       row = document.createElement("div");
@@ -2099,6 +2111,13 @@ function createThinkingPanel() {
     }
     row.innerHTML = html;
     $("chatMessages").scrollTop = $("chatMessages").scrollHeight;
+  }
+
+  function escapeHtml(s) {
+    return String(s)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;");
   }
 
   function finalize() {
@@ -2627,26 +2646,15 @@ function toggleOverview() {
 
 /**
  * Check workingCourses for any time overlap on shared days.
- * workingCourses use "HH:MM" colon format for beginTime/endTime
- * (different from LLM courses which use 4-char "HHMM" strings).
+ * Delegates to BP.findOverlapPair (scheduleGenerator.js) so the solver's
+ * validator and the UI's status bar share one implementation. That helper
+ * correctly skips entries with `online: true` even when Banner left phantom
+ * meeting data on the section (Bug 5, 2026-04-21).
  */
 function detectWorkingConflict() {
-  function toMin(t) {
-    if (!t) return null;
-    const p = t.split(":");
-    return p.length === 2 ? parseInt(p[0]) * 60 + parseInt(p[1]) : null;
-  }
-  for (let i = 0; i < workingCourses.length; i++) {
-    const a = workingCourses[i];
-    const aS = toMin(a.beginTime), aE = toMin(a.endTime);
-    if (!a.days?.length || aS === null || aE === null) continue;
-    for (let j = i + 1; j < workingCourses.length; j++) {
-      const b = workingCourses[j];
-      const bS = toMin(b.beginTime), bE = toMin(b.endTime);
-      if (!b.days?.length || bS === null || bE === null) continue;
-      if (!a.days.some((d) => b.days.includes(d))) continue;
-      if (aS < bE && bS < aE) return { a, b };
-    }
+  const BP = window.BP || {};
+  if (typeof BP.findOverlapPair === "function") {
+    return BP.findOverlapPair(workingCourses);
   }
   return null;
 }

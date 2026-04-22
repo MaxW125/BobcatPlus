@@ -58,6 +58,43 @@
     return aDays.some((d) => bDays.includes(d));
   }
 
+  // Pair-finder for "has any two courses in this list got a real time clash?"
+  // Shared by the solver's validator and by tab.js's status-bar warning.
+  // Bug 5 (2026-04-21): online sections sometimes carry phantom meeting data
+  // from Banner; the `online` flag is the authoritative signal to skip.
+  // Accepts either 4-char "HHMM" or colon "HH:MM" time strings.
+  function findOverlapPair(courses) {
+    function toMin(t) {
+      if (!t || typeof t !== "string") return null;
+      const colon = t.indexOf(":");
+      if (colon >= 0) {
+        return parseInt(t.slice(0, colon), 10) * 60 + parseInt(t.slice(colon + 1), 10);
+      }
+      if (t.length >= 4) {
+        return parseInt(t.slice(0, 2), 10) * 60 + parseInt(t.slice(2, 4), 10);
+      }
+      return null;
+    }
+    const list = Array.isArray(courses) ? courses : [];
+    for (let i = 0; i < list.length; i++) {
+      const a = list[i];
+      if (!a || a.online) continue;
+      const aS = toMin(a.beginTime ?? a.start);
+      const aE = toMin(a.endTime   ?? a.end);
+      if (!a.days || !a.days.length || aS == null || aE == null) continue;
+      for (let j = i + 1; j < list.length; j++) {
+        const b = list[j];
+        if (!b || b.online) continue;
+        const bS = toMin(b.beginTime ?? b.start);
+        const bE = toMin(b.endTime   ?? b.end);
+        if (!b.days || !b.days.length || bS == null || bE == null) continue;
+        if (!a.days.some((d) => b.days.includes(d))) continue;
+        if (aS < bE && bS < aE) return { a, b };
+      }
+    }
+    return null;
+  }
+
   function hashString(s) {
     let h = 0;
     for (let i = 0; i < s.length; i++) {
@@ -915,26 +952,48 @@ ${JSON.stringify(compressed, null, 2)}
     },
   };
 
-  function applyVector(metrics, vec, prefs) {
-    const onlineTerm = (prefs.onlineWeight ?? 0.5) * vec.online * metrics.onlineRatio;
+  // Per-vector breakdown: separates each scoring term so the trace / tests can
+  // explain why a schedule was picked. applyVector returns only `total` for
+  // back-compat; breakdownOf is the richer form.
+  function breakdownOf(metrics, vec, prefs) {
+    const onlineTerm   = (prefs.onlineWeight ?? 0.5) * vec.online * metrics.onlineRatio;
     const affinityTerm = (prefs.careerAffinityWeight ?? 0.5) * vec.affinity * metrics.affinityNorm;
-    const balanceTerm = vec.balance * metrics.balance;
-    const morningPen = (prefs.morningCutoffWeight ?? 0.5) * vec.morning * metrics.morningPenalty;
-    const latePen = (prefs.lateCutoffWeight ?? 0.5) * vec.late * metrics.latePenalty;
+    const balanceTerm  = vec.balance * metrics.balance;
+    const morningPen   = (prefs.morningCutoffWeight ?? 0.5) * vec.morning * metrics.morningPenalty;
+    const latePen      = (prefs.lateCutoffWeight ?? 0.5) * vec.late * metrics.latePenalty;
     const softAvoidPen = (prefs.avoidDayWeight ?? 0.5) * vec.avoidDay * metrics.softAvoidPenalty;
-    const creditPen = vec.creditTarget * metrics.creditTargetDist;
-    return affinityTerm + onlineTerm + balanceTerm - morningPen - latePen - softAvoidPen - creditPen;
+    const creditPen    = vec.creditTarget * metrics.creditTargetDist;
+    const total = affinityTerm + onlineTerm + balanceTerm
+                  - morningPen - latePen - softAvoidPen - creditPen;
+    return { affinityTerm, onlineTerm, balanceTerm, morningPen, latePen, softAvoidPen, creditPen, total };
   }
 
-  function pickTop3(results, preferences, affinityScores) {
-    if (!results.length) return [];
+  function applyVector(metrics, vec, prefs) {
+    return breakdownOf(metrics, vec, prefs).total;
+  }
+
+  // rankSchedules: score every feasible result, compute the per-vector breakdown,
+  // and select 3 distinct top picks. Returns both the picks AND the full scored
+  // list so the trace / metrics layer can explain runner-up deltas.
+  // pickTop3 is kept as a thin wrapper for back-compat with callers that only
+  // want the array of picks.
+  function rankSchedules(results, preferences, affinityScores) {
+    if (!results.length) return { top: [], allScored: [] };
     const scored = results.map((r) => {
       const metrics = scoreSchedule(r, preferences, affinityScores);
+      const breakAffinity = breakdownOf(metrics, WEIGHT_VECTORS.affinity, preferences);
+      const breakOnline   = breakdownOf(metrics, WEIGHT_VECTORS.online,   preferences);
+      const breakBalanced = breakdownOf(metrics, WEIGHT_VECTORS.balanced, preferences);
       return {
         result: r, metrics,
-        scoreAffinity: applyVector(metrics, WEIGHT_VECTORS.affinity, preferences),
-        scoreOnline:   applyVector(metrics, WEIGHT_VECTORS.online,   preferences),
-        scoreBalanced: applyVector(metrics, WEIGHT_VECTORS.balanced, preferences),
+        scoreAffinity: breakAffinity.total,
+        scoreOnline:   breakOnline.total,
+        scoreBalanced: breakBalanced.total,
+        scoreBreakdown: {
+          affinity: breakAffinity,
+          online:   breakOnline,
+          balanced: breakBalanced,
+        },
       };
     });
 
@@ -994,7 +1053,124 @@ ${JSON.stringify(compressed, null, 2)}
     pickFrom("scoreOnline",   "Most online / flexible", "maximizes online / time-flexible");
     pickFrom("scoreBalanced", "Most balanced week", "spreads load evenly across days");
 
-    return top;
+    return { top, allScored: scored };
+  }
+
+  // Back-compat: pickTop3 returns just the array of 3 picks.
+  function pickTop3(results, preferences, affinityScores) {
+    return rankSchedules(results, preferences, affinityScores).top;
+  }
+
+  // ============================================================
+  // 9b. PHASE 0 METRICS — pure helpers, exposed on BP for unit tests
+  // and for attaching to trace payloads. Formulas defined in docs/METRICS.md.
+  // ============================================================
+
+  // Accept either a top-schedule object (from rankSchedules, with .result.picks)
+  // or a schedule-shaped action (with .courses[]).
+  function _scheduleCourses(schedule) {
+    if (Array.isArray(schedule?.courses)) return schedule.courses;
+    if (schedule?.result?.picks) {
+      return schedule.result.picks.map((p) => ({
+        days: p.section.days || [],
+        start: p.section.start,
+        end: p.section.end,
+        online: !!p.section.online,
+        credits: p.section.credits ?? 3,
+      }));
+    }
+    return [];
+  }
+
+  function computeHonoredRate(scheduleAction) {
+    const h = (scheduleAction?.honoredPreferences || []).length;
+    const u = (scheduleAction?.unhonoredPreferences || []).length;
+    if (h + u === 0) return null;
+    return h / (h + u);
+  }
+
+  // 5-axis shape vector: [morningHours, afternoonHours, eveningHours, activeDays, onlineCount].
+  // Online sections contribute to onlineCount but do not contribute hours to any window.
+  function computeArchetypeVector(schedule) {
+    const courses = _scheduleCourses(schedule);
+    const NOON = 12 * 60, FIVE = 17 * 60;
+    let morn = 0, aft = 0, eve = 0, online = 0;
+    const active = new Set();
+    for (const c of courses) {
+      if (c.online) { online++; continue; }
+      const start = toMinutes(c.start);
+      const end   = toMinutes(c.end);
+      if (start == null || end == null) continue;
+      morn += Math.max(0, Math.min(end, NOON) - start) / 60;
+      aft  += Math.max(0, Math.min(end, FIVE) - Math.max(start, NOON)) / 60;
+      eve  += Math.max(0, end - Math.max(start, FIVE)) / 60;
+      for (const d of c.days || []) active.add(d);
+    }
+    return [
+      +morn.toFixed(3),
+      +aft.toFixed(3),
+      +eve.toFixed(3),
+      active.size,
+      online,
+    ];
+  }
+
+  // Mean pairwise L1 distance in max-normalized space.
+  function computeArchetypeDistance(schedules) {
+    if (!Array.isArray(schedules) || schedules.length < 2) return null;
+    const vecs = schedules.map(computeArchetypeVector);
+    const axes = vecs[0].length;
+    const maxes = new Array(axes).fill(0);
+    for (const v of vecs) for (let j = 0; j < axes; j++) if (v[j] > maxes[j]) maxes[j] = v[j];
+    const denoms = maxes.map((m) => (m > 0 ? m : 1));
+    let total = 0, pairs = 0;
+    for (let i = 0; i < vecs.length; i++) {
+      for (let k = i + 1; k < vecs.length; k++) {
+        let axisSum = 0;
+        for (let j = 0; j < axes; j++) {
+          axisSum += Math.abs(vecs[i][j] - vecs[k][j]) / denoms[j];
+        }
+        total += axisSum / axes;
+        pairs++;
+      }
+    }
+    return pairs ? +(total / pairs).toFixed(4) : null;
+  }
+
+  // Did stated soft preferences actually move the top-1 pick?
+  // Returns 1 if zeroing all soft weights would have produced a different
+  // top-1 course set, 0 if they didn't matter, null if no soft prefs stated.
+  function computePenaltyEffectiveness({ topSchedules, allScored, preferences, vectorKey = "scoreAffinity" } = {}) {
+    if (!topSchedules?.length || !allScored?.length || !preferences) return null;
+    const softKeys = ["morningCutoffWeight", "lateCutoffWeight", "avoidDayWeight", "onlineWeight", "careerAffinityWeight"];
+    const anyStated = softKeys.some((k) => preferences[k] != null && preferences[k] > 0);
+    if (!anyStated) return null;
+
+    const vecName = { scoreAffinity: "affinity", scoreOnline: "online", scoreBalanced: "balanced" }[vectorKey] || "affinity";
+    const vec = WEIGHT_VECTORS[vecName];
+
+    const zeroed = { ...preferences };
+    for (const k of softKeys) zeroed[k] = 0;
+
+    let bestScore = -Infinity, bestIdx = -1;
+    for (let i = 0; i < allScored.length; i++) {
+      const score = applyVector(allScored[i].metrics, vec, zeroed);
+      if (score > bestScore) { bestScore = score; bestIdx = i; }
+    }
+    const withoutPrefs = allScored[bestIdx];
+
+    const nameOf = (s) => new Set(s.result.picks.map((p) => p.courseObj.course));
+    const A = nameOf(withoutPrefs);
+    const B = nameOf(topSchedules[0]);
+    for (const x of A) if (!B.has(x)) return 1;
+    for (const x of B) if (!A.has(x)) return 1;
+    return 0;
+  }
+
+  // Phase 0 stub — real implementation arrives in Phase 1 with the Requirement Graph.
+  // Returns null to indicate "not measurable yet" so callers don't gate on it.
+  function computeRequirementGraphValidity(_schedule, _graph) {
+    return null;
   }
 
   // ============================================================
@@ -1377,6 +1553,61 @@ ${profile}${rag}
     return (crns || []).filter((crn) => eligibleCrns.has(String(crn)));
   }
 
+  // Phase 0: top-20 candidates with deltas so the debug pane can show
+  // why each pick beat its runner-ups. Deltas are vs the top-1 under the
+  // scheduler's actual chosen vector for that schedule (not a global max).
+  function _buildRankBreakdown(topSchedules, allScored, preferences) {
+    const VECTOR_ORDER = [
+      { key: "scoreAffinity", vec: "affinity" },
+      { key: "scoreOnline",   vec: "online" },
+      { key: "scoreBalanced", vec: "balanced" },
+    ];
+    const TOP_N = 20;
+    const by = {};
+    for (const { key, vec } of VECTOR_ORDER) {
+      const sorted = allScored.slice().sort((a, b) => b[key] - a[key]);
+      const topScore = sorted[0] ? sorted[0][key] : 0;
+      by[vec] = sorted.slice(0, TOP_N).map((s, i) => ({
+        rank: i + 1,
+        score: +s[key].toFixed(4),
+        delta: +(topScore - s[key]).toFixed(4),
+        courses: s.result.picks.map((p) => p.courseObj.course),
+        crns:    s.result.picks.map((p) => p.section.crn),
+        credits: s.result.credits,
+        breakdown: s.scoreBreakdown[vec],
+        metrics: s.metrics,
+      }));
+    }
+    const pickedLike = topSchedules.map((t) => ({
+      label: t.label,
+      courses: t.result.picks.map((p) => ({
+        days: p.section.days || [],
+        start: p.section.start,
+        end: p.section.end,
+        online: !!p.section.online,
+        credits: p.section.credits ?? 3,
+      })),
+    }));
+    return {
+      totalCandidates: allScored.length,
+      picked: topSchedules.map((t) => ({
+        label: t.label,
+        courses: t.result.picks.map((p) => p.courseObj.course),
+        crns:    t.result.picks.map((p) => p.section.crn),
+        breakdown: t.scoreBreakdown,
+        metrics: t.metrics,
+      })),
+      top20: by,
+      archetype: {
+        vectors: pickedLike.map(computeArchetypeVector),
+        distance: computeArchetypeDistance(pickedLike),
+      },
+      penaltyEffectiveness: computePenaltyEffectiveness({
+        topSchedules, allScored, preferences, vectorKey: "scoreAffinity",
+      }),
+    };
+  }
+
   function _schedulesForAction(topSchedules, rationales, affinityScores, preferences) {
     return topSchedules.map((top) => {
       const r = rationales.find((x) => x.label === top.label);
@@ -1387,6 +1618,7 @@ ${profile}${rag}
         rationale: r?.text || top.tagline,
         totalCredits: top.result.credits,
         metrics: top.metrics,
+        scoreBreakdown: top.scoreBreakdown || null,
         honoredPreferences: facts.honored,
         unhonoredPreferences: facts.unhonored,
         courses: top.result.picks.map((p) => ({
@@ -1562,10 +1794,16 @@ ${profile}${rag}
         return { actions, updatedProfile, intent, trace: trace.entries };
       }
 
-      // Stage 4: Score + pick top 3
+      // Stage 4: Score + pick top 3. Use rankSchedules so we also get every
+      // candidate's score breakdown — we stash the top-20 on the trace so
+      // the debug pane can explain why Top-1 beat Top-2 without re-running.
       const t4 = trace.start("rank", `Ranking ${solved.results.length} schedules across 3 tradeoffs…`);
-      const topSchedules = pickTop3(solved.results, workingPrefs, affinityScores);
-      t4.done({ summary: `Top 3: ${topSchedules.map((s) => s.label).join(" · ")}` });
+      const { top: topSchedules, allScored } = rankSchedules(solved.results, workingPrefs, affinityScores);
+      const rankBreakdown = _buildRankBreakdown(topSchedules, allScored, workingPrefs);
+      t4.done({
+        summary: `Top 3: ${topSchedules.map((s) => s.label).join(" · ")}`,
+        rankBreakdown,
+      });
 
       // Defense-in-depth: validate no conflicts (solver should guarantee this)
       const t5 = trace.start("validate", "Verifying no conflicts…");
@@ -1672,8 +1910,24 @@ ${profile}${rag}
     compressForSolver,
     validateSchedule,
     solve,
+    solveMulti,
+    solveWithRelaxation,
+    buildConstraints,
     pickTop3,
+    rankSchedules,
     scoreSchedule,
+    applyVector,
+    breakdownOf,
+    WEIGHT_VECTORS,
+    // Phase 0 metric helpers (pure, no OpenAI)
+    computeHonoredRate,
+    computeArchetypeVector,
+    computeArchetypeDistance,
+    computePenaltyEffectiveness,
+    computeRequirementGraphValidity,
+    // Low-level time utility, exposed for tests
+    toMinutes,
+    findOverlapPair,
     callIntent, callAffinity, callRationales, callAdvisor,
     calibrateIntentWeights,
     createTrace,
