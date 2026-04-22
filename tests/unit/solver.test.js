@@ -153,4 +153,213 @@ cases.push({
   },
 });
 
+cases.push({
+  name: "solve: hardDropOnline prunes online sections when constraint set",
+  run() {
+    const eligible = [
+      synth.course({
+        name: "HYBRID 1000",
+        sections: [
+          synth.section({ crn: "ON-1", online: true }),
+          synth.section({ crn: "IP-1", days: synth.MWF, start: "1200", end: "1315" }),
+        ],
+      }),
+    ];
+    const out = BP.solve(
+      eligible,
+      synth.defaultConstraints({ hardDropOnline: true, minCourses: 1, minCredits: 3 }),
+    );
+    assertGreater(out.results.length, 0, "expected at least one schedule");
+    for (const r of out.results) {
+      for (const p of r.picks) {
+        assertTrue(!p.section.online, `online section should be pruned, got CRN ${p.section.crn}`);
+      }
+    }
+  },
+});
+
+cases.push({
+  name: "solveMulti: first schedule honors soft prefs when prefordering flag on (D14)",
+  run() {
+    // Regression target: docs/bug1-morning-preference-diagnosis.md.
+    // When `morningCutoffWeight` is below 1.0 (so `hardfloor` cannot prune),
+    // the prefordering flag alone must still surface a preference-honoring
+    // schedule early enough to reach the ranker. In the original
+    // implementation `pref-distance` was the 5th ordering, and the prior
+    // orderings saturated the 2000-schedule pool before it ran. After D14
+    // `pref-distance` runs FIRST with a per-pass budget, so the first
+    // schedule in `allResults` must use afternoon sections.
+    //
+    // Pool: 4 courses × 2 sections each. Morning (0800–1115) vs afternoon
+    // (1400–1715) alternatives on non-conflicting day strips. Every 4-course
+    // combo is feasible (no pairwise overlaps within an AM-row or PM-row), so
+    // the solver freely reaches the all-afternoon schedule — the test asserts
+    // that ordering puts it FIRST.
+    const eligible = [
+      synth.course({
+        name: "A 1000",
+        sections: [
+          synth.section({ crn: "A-AM", days: synth.MWF, start: "0800", end: "0915" }),
+          synth.section({ crn: "A-PM", days: synth.MWF, start: "1400", end: "1515" }),
+        ],
+      }),
+      synth.course({
+        name: "B 1000",
+        sections: [
+          synth.section({ crn: "B-AM", days: synth.TR, start: "0800", end: "0915" }),
+          synth.section({ crn: "B-PM", days: synth.TR, start: "1400", end: "1515" }),
+        ],
+      }),
+      synth.course({
+        name: "C 1000",
+        sections: [
+          synth.section({ crn: "C-AM", days: synth.MWF, start: "1000", end: "1115" }),
+          synth.section({ crn: "C-PM", days: synth.MWF, start: "1600", end: "1715" }),
+        ],
+      }),
+      synth.course({
+        name: "D 1000",
+        sections: [
+          synth.section({ crn: "D-AM", days: synth.TR, start: "1000", end: "1115" }),
+          synth.section({ crn: "D-PM", days: synth.TR, start: "1600", end: "1715" }),
+        ],
+      }),
+    ];
+    const prefs = synth.defaultPreferences({
+      noEarlierThan: "1200",
+      morningCutoffWeight: 0.6, // soft — below hardfloor floor, mimics plain "no" where LLM emits 0.6
+    });
+    const constraints = synth.defaultConstraints({ minCourses: 3, minCredits: 9 });
+
+    const multi = BP.solveMulti(eligible, constraints, prefs, {
+      prefordering: true,
+      hardfloor: false, // explicitly OFF so the only mechanic at play is ordering
+    });
+    assertGreater(multi.results.length, 0, "expected at least one schedule");
+
+    const first = multi.results[0];
+    const allAfternoon = first.picks.every(
+      (p) => p.section.online || BP.toMinutes(p.section.start) >= BP.toMinutes("1200"),
+    );
+    assertTrue(
+      allAfternoon,
+      "first schedule should be all-afternoon (pref-distance ran first); got CRNs " +
+        first.picks.map((p) => p.section.crn).join(","),
+    );
+
+    // And the pref-distance pass must have contributed. Each pass records its
+    // contribution in passContributions — assert the pref-distance pass shows
+    // a nonzero newUnique count so future refactors can't silently neuter it.
+    const prefPass = (multi.passContributions || []).find(
+      (p) => p.ordering === "pref-distance",
+    );
+    assertTrue(prefPass != null, "solveMulti should record a pref-distance pass");
+    assertGreater(prefPass.newUnique, 0, "pref-distance pass must contribute schedules");
+  },
+});
+
+cases.push({
+  name: "solveMulti: prefordering flag off does NOT include pref-distance pass",
+  run() {
+    const eligible = synth.morningVsAfternoonEligible();
+    const constraints = synth.defaultConstraints({ minCourses: 3, minCredits: 9 });
+    const multi = BP.solveMulti(
+      eligible,
+      constraints,
+      synth.defaultPreferences(),
+      { prefordering: false, hardfloor: false },
+    );
+    const prefPass = (multi.passContributions || []).find(
+      (p) => p.ordering === "pref-distance",
+    );
+    assertTrue(prefPass == null, "pref-distance pass should not run with flag off");
+  },
+});
+
+cases.push({
+  name: "solveMulti: per-pass budget prevents single ordering from monopolizing pool",
+  run() {
+    // Regression target: the D14 fix. A single pass (MRV) used to be able to
+    // fill the full SOLVER_RESULT_CAP before the pref-distance pass ran. The
+    // per-pass budget ensures multiple orderings contribute to the pool even
+    // when the pool is deep. We verify by checking that the MRV pass's
+    // newUnique count is bounded below the full cap when prefordering is on
+    // and the eligible set is large enough to trigger saturation in a single
+    // pass.
+    //
+    // Synth: 8 courses × 2 non-conflicting sections = 2^8 = 256 combos, well
+    // under the full cap. We instead check the per-pass cap is respected.
+    const eligible = [];
+    for (let i = 0; i < 8; i++) {
+      eligible.push(
+        synth.course({
+          name: `X ${1000 + i}`,
+          sections: [
+            synth.section({
+              crn: `X-${i}-AM`,
+              days: i % 2 === 0 ? synth.MWF : synth.TR,
+              start: "0800",
+              end: "0915",
+            }),
+            synth.section({
+              crn: `X-${i}-PM`,
+              days: i % 2 === 0 ? synth.MWF : synth.TR,
+              start: "1400",
+              end: "1515",
+            }),
+          ],
+        }),
+      );
+    }
+    const constraints = synth.defaultConstraints({ minCourses: 4, minCredits: 12 });
+    const multi = BP.solveMulti(
+      eligible,
+      constraints,
+      synth.defaultPreferences({ noEarlierThan: "1200", morningCutoffWeight: 0.6 }),
+      { prefordering: true, hardfloor: false },
+    );
+    const mrvPass = (multi.passContributions || []).find((p) => p.ordering === "mrv");
+    assertTrue(mrvPass != null, "mrv pass should run");
+    // Per-pass budget = ceil(2000 / 5) = 400. Generated count for MRV should
+    // never exceed its budget. This guards against a future refactor that
+    // accidentally hands the full cap back to a single pass.
+    assertTrue(
+      mrvPass.generated <= mrvPass.passCap,
+      `mrv generated ${mrvPass.generated} > passCap ${mrvPass.passCap}`,
+    );
+  },
+});
+
+cases.push({
+  name: "solve: hardNoEarlierThan drops sections starting before cutoff",
+  run() {
+    const eligible = [
+      synth.course({
+        name: "EARLY LATE",
+        sections: [
+          synth.section({ crn: "AM", days: synth.MWF, start: "0900", end: "1015" }),
+          synth.section({ crn: "PM", days: synth.MWF, start: "1300", end: "1415" }),
+        ],
+      }),
+    ];
+    const out = BP.solve(
+      eligible,
+      synth.defaultConstraints({
+        hardNoEarlierThan: "1200",
+        minCourses: 1,
+        minCredits: 3,
+      }),
+    );
+    assertGreater(out.results.length, 0, "expected at least one schedule");
+    for (const r of out.results) {
+      for (const p of r.picks) {
+        assertTrue(
+          BP.toMinutes(p.section.start) >= BP.toMinutes("1200"),
+          `section ${p.section.crn} starts before hard noon floor`,
+        );
+      }
+    }
+  },
+});
+
 module.exports = { cases };

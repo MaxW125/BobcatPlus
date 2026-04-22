@@ -215,13 +215,8 @@ cases.push({
 });
 
 cases.push({
-  name: "known gap: no preferInPerson scorer term exists (Phase 2 will add one)",
-  expectedToFail: true,
+  name: "invariant: preferInPerson inverts online term so in-person outranks fully-online under affinity",
   run() {
-    // Today scoreSchedule has no `preferInPerson` handling — it only ever
-    // rewards onlineRatio, never penalizes it. This test exists to guarantee
-    // a scorer term is added in Phase 2. When Phase 2 lands, remove the
-    // `expectedToFail` flag.
     const prefs = synth.defaultPreferences();
     prefs.preferInPerson = true;
     const onlinePicks = [

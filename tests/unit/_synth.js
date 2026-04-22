@@ -82,6 +82,7 @@ function defaultPreferences(overrides = {}) {
     lateCutoffWeight: 0.5,
     avoidDayWeight: 0.5,
     preferOnline: false,
+    preferInPerson: false,
     ...overrides,
   };
 }
