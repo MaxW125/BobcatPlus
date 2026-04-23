@@ -1,15 +1,19 @@
 # Bobcat Plus — AI Scheduler Handoff
 
 > **Refactor in flight (2026-04-23).** Branch `refactor-on-main` is porting
-> the `Refactor` branch's ES-module split onto current `main`. Four commits
+> the `Refactor` branch's ES-module split onto current `main`. Five commits
 > landed: test safety net (`3b9ccef`, `64c817d`), SW ES-module flip
-> (`021e87a`), and the leaf bg/* split (commit 4 — `bg/constants.js`,
-> `bg/cache.js`, `bg/session.js`, `bg/bannerApi.js`, `bg/prereqs.js`).
-> `background.js` dropped ~530 lines and all five new modules carry
-> zero tests-of-their-own but preserve their load-bearing invariants
-> (session mutex FIFO, `searchCoursesBySubjects` + `subjectSearch|v2|`
-> cache keys, `self.BPPerf` timeout + mapPool wiring). Commit 4 gate:
-> manual eligible-list <3s smoke before commit 5 stacks. See
+> (`021e87a`), the leaf bg/* split (commit 4 — `bg/constants.js`,
+> `bg/cache.js`, `bg/session.js`, `bg/bannerApi.js`, `bg/prereqs.js`), and
+> the studentInfo + registration split (commit 5 — `bg/studentInfo.js`,
+> `bg/registration.js`). `background.js` is down ~2100 lines from commit 3
+> baseline and all seven bg/* modules preserve their load-bearing
+> invariants (session mutex FIFO, `searchCoursesBySubjects` +
+> `subjectSearch|v2|` cache keys, `self.BPPerf` timeout + mapPool wiring,
+> RequirementGraph source-of-truth for `needed[]`, `/saml/login` popup
+> per D19). Commit 5 gate: manual Chrome smoke — closed-term schedule
+> loads via `registrationHistory` path + `auditDiagnostics.parity`
+> spot-check on ≥3 real audits before commit 6 stacks. See
 > `docs/refactor-on-main-plan.md` for the full blueprint and paste-ready
 > opener. The LLM-algorithm `main` is otherwise the active trunk; bug
 > fixes continue there until the refactor lands.
@@ -205,7 +209,8 @@ diagnosis doc.
 ## Recent commit history
 
 **Branch `refactor-on-main`** (structural port, in flight):
-- _commit 4 (pending push)_ — refactor(bg): leaf split — constants / cache / session / bannerApi / prereqs extracted into `extension/bg/*.js`; `background.js` slims to ES-named-imports; session mutex + `subjectSearch|v2|` cache + BPPerf timeout wiring preserved; tests + Node SW-graph smoke green
+- _commit 5 (pending push)_ — refactor(bg): studentInfo + registration — `bg/studentInfo.js` (getStudentInfo, getAuditData w/ RequirementGraph wiring, getDegreeAuditOverview, fetchCourseLinkFromDW) + `bg/registration.js` (getCurrentSchedule w/ registrationHistory fallback, openLoginPopup at `/saml/login`). `background.js` drops another ~1600 lines; tests + Node SW-graph smoke (11 modules) green
+- `a3f6086` — refactor(bg): leaf split — constants / cache / session / bannerApi / prereqs
 - `021e87a` — refactor(sw): service worker flipped to ES module; inline `BPPerf` fallback deleted (D20)
 - `64c817d` — test: affinity cache wipe invariant + seeded `tests/mocks/chrome.js`
 - `3b9ccef` — test: `validateSchedule` (12 cases) + Jaccard course-set dedup regression
