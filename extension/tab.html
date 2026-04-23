@@ -175,6 +175,14 @@
           </div>
         </div>
         <table class="calendar" id="calendar"></table>
+        <div class="online-courses-bar" id="onlineCoursesBar" style="display:none;">
+          <div class="online-courses-header">
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+            <span>Online / asynchronous</span>
+            <span class="online-courses-count" id="onlineCoursesCount"></span>
+          </div>
+          <div class="online-courses-list" id="onlineCoursesList"></div>
+        </div>
       </div>
 
       <div class="resize-handle" id="resizeHandle"></div>
@@ -218,6 +226,10 @@
             <button class="ai-lock-all-btn" id="aiLockAllBtn" title="Lock all courses currently on the calendar">
               <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
               Lock all
+            </button>
+            <button class="ai-clear-all-btn" id="aiClearAllBtn" title="Remove all unlocked courses from the calendar">
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>
+              Clear all
             </button>
           </div>
           <div class="chat-messages" id="chatMessages">

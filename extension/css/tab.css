@@ -1653,6 +1653,169 @@ body {
   opacity: 0.45;
   cursor: default;
 }
+.ai-clear-all-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  font-weight: 600;
+  padding: 3px 9px;
+  border-radius: 4px;
+  border: 1px solid rgba(120, 120, 120, 0.35);
+  background: rgba(120, 120, 120, 0.06);
+  color: var(--text);
+  cursor: pointer;
+  white-space: nowrap;
+  font-family: inherit;
+  margin-left: 4px;
+  transition: background 0.1s, border-color 0.1s;
+  flex-shrink: 0;
+}
+.ai-clear-all-btn:hover {
+  background: rgba(180, 60, 50, 0.12);
+  border-color: rgba(180, 60, 50, 0.5);
+  color: #b04030;
+}
+.ai-clear-all-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+/* ── Online courses bar (below the calendar) ── */
+.online-courses-bar {
+  margin-top: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.02);
+}
+.online-courses-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text);
+  opacity: 0.75;
+  margin-bottom: 6px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.online-courses-count {
+  margin-left: auto;
+  font-weight: 500;
+  opacity: 0.7;
+  text-transform: none;
+  letter-spacing: 0;
+}
+.online-courses-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.online-course-card {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px 6px 10px;
+  border-radius: 6px;
+  border: 1px solid rgba(80, 18, 20, 0.25);
+  background: rgba(80, 18, 20, 0.05);
+  min-width: 160px;
+  max-width: 260px;
+  flex: 0 1 auto;
+}
+.online-course-card.locked {
+  opacity: 0.85;
+  border-style: dashed;
+}
+.online-course-main {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+}
+.online-course-code {
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.2;
+}
+.online-course-lock {
+  font-size: 9px;
+  opacity: 0.7;
+}
+.online-course-title {
+  font-size: 10px;
+  opacity: 0.75;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.online-course-remove {
+  all: unset;
+  cursor: pointer;
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  opacity: 0.5;
+  flex-shrink: 0;
+  color: var(--text);
+}
+.online-course-remove:hover {
+  background: rgba(200, 60, 50, 0.15);
+  color: #b04030;
+  opacity: 1;
+}
+
+/* ── Avoid-day column overlay ── */
+.avoid-day-header {
+  position: relative;
+  background: linear-gradient(
+    135deg,
+    rgba(80, 18, 20, 0.04) 0,
+    rgba(80, 18, 20, 0.04) 6px,
+    rgba(80, 18, 20, 0.08) 6px,
+    rgba(80, 18, 20, 0.08) 12px
+  );
+}
+.avoid-day-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 9px;
+  font-weight: 500;
+  opacity: 0.65;
+  letter-spacing: 0.02em;
+  margin-top: 2px;
+}
+.avoid-day-remove {
+  background: transparent;
+  border: none;
+  color: inherit;
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 1;
+  padding: 0 2px;
+  opacity: 0.5;
+  border-radius: 3px;
+  transition: opacity 0.12s, background 0.12s;
+}
+.avoid-day-remove:hover {
+  opacity: 1;
+  background: rgba(80, 18, 20, 0.15);
+}
+.avoid-day-cell {
+  background: repeating-linear-gradient(
+    135deg,
+    rgba(80, 18, 20, 0.02) 0,
+    rgba(80, 18, 20, 0.02) 8px,
+    rgba(80, 18, 20, 0.05) 8px,
+    rgba(80, 18, 20, 0.05) 16px
+  );
+}
 
 /* ── Calendar block lock/remove buttons ── */
 .course-block {
@@ -2141,6 +2304,12 @@ body {
   .bp-icon-btn:hover                          { color: #c47878; border-color: rgba(196,120,120,0.38); background: rgba(160,60,60,0.07); }
   .ai-lock-all-btn                            { border-color: rgba(196,120,120,0.35); background: rgba(160,60,60,0.12); color: #c47878; }
   .ai-lock-all-btn:hover                      { background: rgba(160,60,60,0.22); border-color: rgba(196,120,120,0.5); }
+  .ai-clear-all-btn                           { border-color: rgba(180,180,180,0.25); background: rgba(180,180,180,0.06); color: #aaa; }
+  .ai-clear-all-btn:hover                     { background: rgba(200,80,70,0.16); border-color: rgba(224,112,96,0.45); color: #e07060; }
+  .avoid-day-header                           { background: linear-gradient(135deg, rgba(196,120,120,0.05) 0, rgba(196,120,120,0.05) 6px, rgba(196,120,120,0.10) 6px, rgba(196,120,120,0.10) 12px); }
+  .avoid-day-cell                             { background: repeating-linear-gradient(135deg, rgba(196,120,120,0.03) 0, rgba(196,120,120,0.03) 8px, rgba(196,120,120,0.07) 8px, rgba(196,120,120,0.07) 16px); }
+  .online-courses-bar                         { background: rgba(255,255,255,0.02); border-color: rgba(255,255,255,0.08); }
+  .online-course-card                         { border-color: rgba(196,120,120,0.25); background: rgba(160,60,60,0.08); }
   .sched-pill                                 { background: rgba(160,60,60,0.16); border-color: rgba(196,120,120,0.32); color: #c47878; }
   .section-check                              { color: #c47878; }
 

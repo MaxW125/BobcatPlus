@@ -85,7 +85,12 @@ function sendToBackground(message) { return new Promise((resolve) => chrome.runt
 let currentStudent = null;
 let studentProfile = null;     // built by buildStudentProfile() when student data loads
 let calendarBlocks = [];       // non-course time blocks (work, gym, etc.) — persisted
+let avoidDays = [];            // days the user asked to keep class-free — persisted
+let lastRejectedCandidates = new Map();   // CRN → candidate, for chip click direct-add
+let chatGeneration = 0;        // bumped on each sendChat + term switch — stale turns bail
 let currentTerm = null;
+/** term code → Banner description (for empty-schedule hints). */
+let termDescriptionsByCode = Object.create(null);
 let analysisResults = null;
 let eligibleAnalysisSeq = 0;
 let savedSchedules = [];
@@ -99,6 +104,103 @@ let registeredFetchCompleted = false;
 let registeredFetchOk = false;
 let bannerPlans = [];
 let registeredScheduleCache = {};
+
+let autoLoginInFlight = false;
+let lastAutoLoginAt = 0;
+let autoLoginAttempts = 0;
+function maybeAutoLogin(reason = "", termForProbe) {
+  const now = Date.now();
+  // Prevent login-popup thrash loops (open/close/open/close...).
+  if (autoLoginInFlight) return;
+  if (now - lastAutoLoginAt < 45_000) return; // cooldown
+  if (autoLoginAttempts >= 2) return;         // hard cap per page load
+  autoLoginInFlight = true;
+  lastAutoLoginAt = now;
+  autoLoginAttempts++;
+  const t = termForProbe != null ? termForProbe : currentTerm;
+  try {
+    chrome.runtime.sendMessage({ action: "openLoginPopup", term: t || undefined }, () => {});
+  } catch (_) {}
+  const listener = (msg) => {
+    if (msg.type === "loginSuccess") {
+      chrome.runtime.onMessage.removeListener(listener);
+      autoLoginInFlight = false;
+      // After login, confirm session is actually valid before retrying,
+      // otherwise we can loop endlessly on "loginSuccess" without auth.
+      (async () => {
+        const ok = await checkAuth();
+        if (!ok) {
+          $("statusBar").textContent = "Still signed out — click Import Schedule to log in.";
+          return;
+        }
+        analysisResults = null; cachedRawData = null; cachedRegisteredCourses = []; cachedRegisteredTerm = null; conversationHistory = [];
+        await waitWithChatCountdown(1);
+        const result = await loadSchedule(currentTerm);
+        if (result && result.authRequired) {
+          $("statusBar").textContent = "Login didn't stick — open TXST in a normal tab, sign in, then click Import Schedule.";
+          return;
+        }
+        autoLoadEligibleCourses({ forceRefresh: true });
+      })().catch(() => {});
+    }
+    if (msg.type === "loginCancelled") {
+      chrome.runtime.onMessage.removeListener(listener);
+      autoLoginInFlight = false;
+      $("statusBar").textContent = "Login cancelled — click Import Schedule to try again.";
+    }
+  };
+  chrome.runtime.onMessage.addListener(listener);
+  if (reason) $("statusBar").textContent = reason;
+}
+
+const EMPTY_REG_RECOVER_KEY = "bpRegEmptyRecover:";
+const SKIP_EMPTY_RECOVER_ONCE = "bpSkipEmptyRecoverOnce";
+
+function clearEmptyRegistrationRecoverFlag(term) {
+  try {
+    sessionStorage.removeItem(EMPTY_REG_RECOVER_KEY + term);
+  } catch (_) {}
+}
+
+/** When Banner returns JSON but zero events while DegreeWorks looks signed in — stale registration session. */
+async function maybeRecoverEmptyRegistration(term, fromDiskCache) {
+  if (fromDiskCache) return;
+  try {
+    if (sessionStorage.getItem(SKIP_EMPTY_RECOVER_ONCE)) {
+      sessionStorage.removeItem(SKIP_EMPTY_RECOVER_ONCE);
+      return;
+    }
+  } catch (_) {}
+  try {
+    if (sessionStorage.getItem(EMPTY_REG_RECOVER_KEY + term)) return;
+  } catch (_) {}
+  const ok = await checkAuth();
+  if (!ok) return;
+  try {
+    sessionStorage.setItem(EMPTY_REG_RECOVER_KEY + term, "1");
+  } catch (_) {}
+  if (autoLoginInFlight) return;
+  $("statusBar").textContent =
+    "No registration rows from Banner — opening TXST sign-in to refresh…";
+  try {
+    chrome.runtime.sendMessage({ action: "openLoginPopup", term }, () => {});
+  } catch (_) {}
+  const listener = (msg) => {
+    if (msg.type === "loginSuccess") {
+      chrome.runtime.onMessage.removeListener(listener);
+      (async () => {
+        await waitWithChatCountdown(1);
+        await loadSchedule(term);
+      })().catch(() => {});
+    }
+    if (msg.type === "loginCancelled") {
+      chrome.runtime.onMessage.removeListener(listener);
+      $("statusBar").textContent =
+        "Still empty — open TXST in a normal tab, sign in, then Import Schedule.";
+    }
+  };
+  chrome.runtime.onMessage.addListener(listener);
+}
 
 const REG_EVENTS_STORAGE_KEY = "bobcatRegEventsCache";
 function persistRegistrationEvents(term, events) {
@@ -157,6 +259,21 @@ function registerCourseMeta(crn, meta) { if (crn && meta) calendarCourseMetaByCr
 // ============================================================
 
 (async () => {
+  let loginFromToolbar = false;
+  try {
+    const p = new URLSearchParams(location.search);
+    if (p.get("login") === "1") {
+      loginFromToolbar = true;
+      p.delete("login");
+      const qs = p.toString();
+      history.replaceState(
+        {},
+        "",
+        location.pathname + (qs ? "?" + qs : "") + location.hash,
+      );
+    }
+  } catch (_) {}
+
   chrome.runtime.sendMessage(
     { action: "getDegreeAuditOverview" },
     (auditData) => {
@@ -179,9 +296,10 @@ function registerCourseMeta(crn, meta) { if (crn && meta) calendarCourseMetaByCr
     },
   );
 
-  chrome.storage.local.get(["savedSchedules", "calendarBlocks"], (result) => {
+  chrome.storage.local.get(["savedSchedules", "calendarBlocks", "avoidDays"], (result) => {
     if (result.savedSchedules) savedSchedules = result.savedSchedules;
     if (result.calendarBlocks) calendarBlocks = result.calendarBlocks;
+    if (Array.isArray(result.avoidDays)) avoidDays = result.avoidDays;
     renderSavedList();
   });
 
@@ -192,7 +310,10 @@ function registerCourseMeta(crn, meta) { if (crn && meta) calendarCourseMetaByCr
     const now = new Date();
     let currentIdx = 0;
     for (let i = 0; i < terms.length; i++) {
-      const dateMatch = terms[i].description.match(/(\d{2}-[A-Z]{3}-\d{4})/);
+      const desc = String(terms[i].description || "");
+      if (/\(view only\)/i.test(desc)) continue;
+      if (/correspondence/i.test(desc)) continue;
+      const dateMatch = desc.match(/(\d{2}-[A-Z]{3}-\d{4})/);
       if (dateMatch) {
         const startDate = new Date(dateMatch[1]);
         if (startDate <= now) {
@@ -202,7 +323,9 @@ function registerCourseMeta(crn, meta) { if (crn && meta) calendarCourseMetaByCr
       }
     }
 
+    termDescriptionsByCode = Object.create(null);
     terms.forEach((t, i) => {
+      termDescriptionsByCode[String(t.code)] = String(t.description || "");
       const opt = document.createElement("option");
       opt.value = t.code;
       opt.textContent = t.description;
@@ -216,6 +339,29 @@ function registerCourseMeta(crn, meta) { if (crn && meta) calendarCourseMetaByCr
 
     (async () => {
       const gen = ++termChangeGeneration;
+      if (loginFromToolbar) {
+        $("statusBar").textContent =
+          "Complete TXST sign-in in the window — Bobcat Plus will load when registration is ready.";
+        await new Promise((resolve) => {
+          const listener = (msg) => {
+            if (
+              msg.type === "loginSuccess" ||
+              msg.type === "loginCancelled"
+            ) {
+              chrome.runtime.onMessage.removeListener(listener);
+              resolve();
+            }
+          };
+          chrome.runtime.onMessage.addListener(listener);
+          chrome.runtime.sendMessage(
+            { action: "openLoginPopup", term: currentTerm },
+            () => {},
+          );
+        });
+        try {
+          sessionStorage.setItem(SKIP_EMPTY_RECOVER_ONCE, "1");
+        } catch (_) {}
+      }
       const ok = await checkAuth();
       if (gen !== termChangeGeneration) return;
       if (ok) {
@@ -239,12 +385,15 @@ function registerCourseMeta(crn, meta) { if (crn && meta) calendarCourseMetaByCr
 
 $("termSelect").addEventListener("change", async (e) => {
   const gen = ++termChangeGeneration;
+  // Also bump chatGeneration so any in-flight handleUserTurn goes stale
+  // and bails before dispatching actions to the now-invalid term context.
+  chatGeneration++;
   currentTerm = e.target.value;
   // Cancel any in-flight analysis immediately — otherwise the old term keeps
   // firing searchCourse calls for 2-3s until the new runAnalysis message lands.
   chrome.runtime.sendMessage({ action: "cancelAnalysis" }).catch(() => {});
   analysisResults = null; cachedRawData = null; cachedRegisteredCourses = []; cachedRegisteredTerm = null;
-  conversationHistory = []; bannerPlans = []; registeredScheduleCache = {};
+  conversationHistory = []; lastRejectedCandidates = new Map(); bannerPlans = []; registeredScheduleCache = {};
   eligibleCourses = []; showOpenSeatsOnly = false; expandedCourseKey = null; selectedSectionByCourse = {};
   workingCourses = []; lockedCrns = new Set();
   newPlanDisplayName = ""; newPlanSingleClickOpensEdit = true;
@@ -888,14 +1037,14 @@ if (importBtn) {
     importBtn.disabled = true; importBtn.classList.add("loading"); importBtn.textContent = "Checking session...";
     const authed = await checkAuth();
     const importSvg = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg> Import Schedule`;
-    if (!authed) { importBtn.textContent = "Waiting for login..."; addMessage("system", "Opening TXST login — sign in and the import will start automatically."); chrome.runtime.sendMessage({ action: "openLoginPopup" }); attachImportLoginListener(importBtn, importSvg); return; }
+    if (!authed) { importBtn.textContent = "Waiting for login..."; addMessage("system", "Opening TXST login — sign in and the import will start automatically."); chrome.runtime.sendMessage({ action: "openLoginPopup", term: currentTerm }); attachImportLoginListener(importBtn, importSvg); return; }
     importBtn.textContent = "Importing..."; $("statusBar").textContent = "Importing schedule...";
     analysisResults = null; cachedRawData = null; cachedRegisteredCourses = []; cachedRegisteredTerm = null; conversationHistory = [];
     let resetBtn = true;
     try {
       const result = await loadSchedule(currentTerm);
       if (result.stale) return;
-      if (result.authRequired || (!result.hadRegistrationRows && !result.fromDiskCache)) { resetBtn = false; importBtn.textContent = "Waiting for login..."; addMessage("system", "Opening TXST login — sign in to load your registration."); chrome.runtime.sendMessage({ action: "openLoginPopup" }); attachImportLoginListener(importBtn, importSvg); return; }
+      if (result.authRequired || (!result.hadRegistrationRows && !result.fromDiskCache)) { resetBtn = false; importBtn.textContent = "Waiting for login..."; addMessage("system", "Opening TXST login — sign in to load your registration."); chrome.runtime.sendMessage({ action: "openLoginPopup", term: currentTerm }); attachImportLoginListener(importBtn, importSvg); return; }
     } finally { if (resetBtn) { importBtn.disabled = false; importBtn.classList.remove("loading"); importBtn.innerHTML = importSvg; } }
   });
 }
@@ -981,21 +1130,139 @@ class AuthRequiredError extends Error {
   constructor() { super("AUTH_REQUIRED"); this.name = "AuthRequiredError"; }
 }
 
+const TXST_REG_SCHEDULE_BASE =
+  "https://reg-prod.ec.txstate.edu/StudentRegistrationSsb";
+
+const TXST_REG_HISTORY_PAGE =
+  TXST_REG_SCHEDULE_BASE + "/ssb/registrationHistory/registrationHistory";
+
+let tabRegHistorySyncCache = { token: "", ts: 0 };
+const TAB_REG_HISTORY_SYNC_TTL_MS = 10 * 60 * 1000;
+
+async function getRegistrationHistorySynchronizerTokenTab() {
+  const now = Date.now();
+  if (
+    tabRegHistorySyncCache.token &&
+    now - tabRegHistorySyncCache.ts < TAB_REG_HISTORY_SYNC_TTL_MS
+  ) {
+    return tabRegHistorySyncCache.token;
+  }
+  const r = await fetch(TXST_REG_HISTORY_PAGE, {
+    credentials: "include",
+    redirect: "follow",
+  });
+  const html = await r.text();
+  const m = html.match(
+    /<meta\s+name="synchronizerToken"\s+content="([^"]*)"/i,
+  );
+  const token = m && m[1] ? m[1] : "";
+  tabRegHistorySyncCache = { token, ts: now };
+  return token;
+}
+
+async function fetchGetRegistrationEventsPayloadTab(extraHeaders) {
+  const response = await fetch(
+    TXST_REG_SCHEDULE_BASE +
+      "/ssb/classRegistration/getRegistrationEvents?termFilter=",
+    { credentials: "include", headers: extraHeaders || {} },
+  );
+  let text = await response.text();
+  const eventsBase =
+    TXST_REG_SCHEDULE_BASE +
+    "/ssb/classRegistration/getRegistrationEvents";
+  const resolved = await resolveRegistrationHtmlToJson(text, eventsBase);
+  if (resolved.authRequired) throw new AuthRequiredError();
+  text = resolved.text;
+  if (!registrationResponseLooksLikeJson(text)) return null;
+  return normalizeRegistrationEventsPayload(JSON.parse(text));
+}
+
+/**
+ * Same handshake as background `fetchRegistrationEventsHandshake`:
+ * registration mode vs class-search mode (past / closed registration terms).
+ */
+async function fetchRegistrationEventsHandshakeTab(term, registrationMode) {
+  const t = String(term);
+  if (registrationMode) {
+    await fetch(
+      TXST_REG_SCHEDULE_BASE + "/ssb/term/search?mode=registration",
+      {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({ term: t }).toString(),
+      },
+    );
+  } else {
+    await fetch(TXST_REG_SCHEDULE_BASE + "/ssb/classSearch/resetDataForm", {
+      method: "POST",
+      credentials: "include",
+    });
+    await fetch(TXST_REG_SCHEDULE_BASE + "/ssb/term/search?mode=search", {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        term: t,
+        studyPath: "",
+        studyPathText: "",
+        startDatepicker: "",
+        endDatepicker: "",
+      }).toString(),
+    });
+  }
+  await fetch(
+    TXST_REG_SCHEDULE_BASE + "/ssb/classRegistration/classRegistration",
+    { credentials: "include" },
+  );
+  return fetchGetRegistrationEventsPayloadTab({});
+}
+
+async function fetchRegistrationEventsViaHistoryResetTab(term) {
+  const sync = await getRegistrationHistorySynchronizerTokenTab();
+  const ajax = {
+    Accept: "application/json, text/javascript, */*; q=0.01",
+    "X-Requested-With": "XMLHttpRequest",
+    ...(sync ? { "X-Synchronizer-Token": sync } : {}),
+    Referer: TXST_REG_HISTORY_PAGE,
+  };
+  await fetch(
+    TXST_REG_SCHEDULE_BASE +
+      "/ssb/registrationHistory/reset?term=" +
+      encodeURIComponent(String(term)),
+    { credentials: "include", headers: ajax },
+  );
+  return fetchGetRegistrationEventsPayloadTab(ajax);
+}
+
 function getCurrentSchedule(term) {
   return queueRegistrationFetch(async () => {
+    const runHandshake = async (registrationMode) => {
+      try {
+        return await fetchRegistrationEventsHandshakeTab(term, registrationMode);
+      } catch (e) {
+        if (e instanceof AuthRequiredError) throw e;
+        return null;
+      }
+    };
+    const runHistory = async () => {
+      try {
+        return await fetchRegistrationEventsViaHistoryResetTab(term);
+      } catch (e) {
+        if (e instanceof AuthRequiredError) throw e;
+        return null;
+      }
+    };
     try {
-      await fetch("https://reg-prod.ec.txstate.edu/StudentRegistrationSsb/ssb/term/search?mode=registration", { method: "POST", credentials: "include", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ term }).toString() });
-      await fetch("https://reg-prod.ec.txstate.edu/StudentRegistrationSsb/ssb/classRegistration/classRegistration", { credentials: "include" });
-      const response = await fetch("https://reg-prod.ec.txstate.edu/StudentRegistrationSsb/ssb/classRegistration/getRegistrationEvents?termFilter=", { credentials: "include" });
-      let text = await response.text();
-      const eventsBase = "https://reg-prod.ec.txstate.edu/StudentRegistrationSsb/ssb/classRegistration/getRegistrationEvents";
-      const resolved = await resolveRegistrationHtmlToJson(text, eventsBase);
-      if (resolved.authRequired) throw new AuthRequiredError();
-      text = resolved.text;
-      if (!registrationResponseLooksLikeJson(text)) return null;
-      return JSON.parse(text);
+      let primary = await runHandshake(true);
+      if (primary !== null && primary.length > 0) return primary;
+      const fallback = await runHandshake(false);
+      if (fallback !== null && fallback.length > 0) return fallback;
+      const history = await runHistory();
+      if (history !== null && history.length > 0) return history;
+      return primary !== null ? primary : fallback !== null ? fallback : history;
     } catch (e) {
-      if (e instanceof AuthRequiredError) throw e; // propagate — don't swallow
+      if (e instanceof AuthRequiredError) throw e;
       return null;
     }
   });
@@ -1005,26 +1272,42 @@ function getCurrentSchedule(term) {
 // LOAD SCHEDULE
 // ============================================================
 
+function registrationCrnKey(ev) {
+  return String(ev.crn ?? ev.courseReferenceNumber ?? "").trim();
+}
+
 function buildRegisteredCoursesFromEvents(data) {
   const seen = new Set(), registered = [], locks = new Set();
-  if (!data || !data.length) return { registered, locks };
-  for (const event of data) {
-    if (seen.has(event.crn)) continue;
-    seen.add(event.crn);
+  const rows = normalizeRegistrationEventsPayload(data);
+  if (!rows.length) return { registered, locks };
+  const expanded = rows.map(expandRegistrationEvent);
+  for (const event of expanded) {
+    const ck = registrationCrnKey(event);
+    if (!ck || seen.has(ck)) continue;
+    seen.add(ck);
     const start = new Date(event.start), end = new Date(event.end);
+    if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) continue;
     const dayNames = ["Mon", "Tue", "Wed", "Thu", "Fri"];
     const days = [];
-    for (const ev2 of data) {
-      if (String(ev2.crn) !== String(event.crn)) continue;
+    for (const ev2 of expanded) {
+      if (registrationCrnKey(ev2) !== ck) continue;
       const d = new Date(ev2.start).getDay() - 1;
       if (d >= 0 && d <= 4 && !days.includes(dayNames[d])) days.push(dayNames[d]);
     }
     const bh = start.getHours(), bm = start.getMinutes();
     const eh = end.getHours(), em = end.getMinutes();
-    registered.push({ crn: String(event.crn), subject: event.subject, courseNumber: event.courseNumber, title: event.title, days, beginTime: String(bh).padStart(2,"0") + ":" + String(bm).padStart(2,"0"), endTime: String(eh).padStart(2,"0") + ":" + String(em).padStart(2,"0"), source: "registered", online: false });
-    locks.add(String(event.crn));
+    registered.push({ crn: ck, subject: event.subject, courseNumber: event.courseNumber, title: event.title, days, beginTime: String(bh).padStart(2,"0") + ":" + String(bm).padStart(2,"0"), endTime: String(eh).padStart(2,"0") + ":" + String(em).padStart(2,"0"), source: "registered", online: false });
+    locks.add(ck);
   }
   return { registered, locks };
+}
+
+function emptyScheduleStatusMessage(term) {
+  const d = termDescriptionsByCode[String(term)] || "";
+  if (/\(view only\)/i.test(d)) {
+    return "No meetings for this term — open Banner registration, select this View Only term, then Import Schedule.";
+  }
+  return "No registered courses for this term — if Banner closed registration, try the View Only row for Spring or Summer/Fall.";
 }
 
 async function loadSchedule(term) {
@@ -1062,12 +1345,15 @@ async function loadSchedule(term) {
 
   if (fetchGen !== scheduleFetchGeneration) return { stale: true, hadRegistrationRows: false, fromDiskCache: false, fetchOk: false };
 
+  if (data != null) data = normalizeRegistrationEventsPayload(data);
+
   registeredFetchOk = data !== null;
   registeredFetchCompleted = true;
   if (data && data.length > 0) {
+    clearEmptyRegistrationRecoverFlag(term);
     removeExistingScheduleRefreshPrompts();
     registeredScheduleCache[term] = data;
-    cachedRegisteredCourses = compressRegisteredForLLM(data);
+    cachedRegisteredCourses = compressRegisteredForLLM(data.map(expandRegistrationEvent));
     cachedRegisteredTerm = term;
     const { registered, locks } = buildRegisteredCoursesFromEvents(data);
     lockedCrns = locks;
@@ -1098,12 +1384,16 @@ async function loadSchedule(term) {
     $("statusBar").textContent = authRequired
       ? "Session expired — click Import Schedule to log back in."
       : "Could not reach registration data. Try Import Schedule again.";
+    if (authRequired) {
+      maybeAutoLogin("Session expired — opening login…", term);
+    }
     if (!authRequired) addScheduleRefreshPrompt();
     return { stale: false, hadRegistrationRows: false, fromDiskCache, fetchOk: false, authRequired };
   } else {
     removeExistingScheduleRefreshPrompts();
     cachedRegisteredCourses = []; cachedRegisteredTerm = term;
-    buildEmptyCalendar(); $("statusBar").textContent = "No registered courses for this term";
+    buildEmptyCalendar(); $("statusBar").textContent = emptyScheduleStatusMessage(term);
+    void maybeRecoverEmptyRegistration(term, fromDiskCache);
     return { stale: false, hadRegistrationRows: false, fromDiskCache: false, fetchOk: true, authRequired: false };
   }
 }
@@ -1191,16 +1481,35 @@ function enterNewPlanEditMode() {
 
 function buildEmptyCalendar() {
   clearCalendarCourseMeta();
+  const shortDays = ["Mon", "Tue", "Wed", "Thu", "Fri"];
+  const avoidSet = new Set(avoidDays || []);
   let html = '<tr><th class="time-col">Time</th>';
-  DAYS.forEach((d) => { html += "<th>" + d + "</th>"; });
+  DAYS.forEach((d, i) => {
+    const short = shortDays[i];
+    const isAvoid = avoidSet.has(short);
+    const avoidCls = isAvoid ? " avoid-day-header" : "";
+    const tag = isAvoid
+      ? '<span class="avoid-day-tag">Kept clear<button class="avoid-day-remove" data-day="' + short + '" title="Remove this block" aria-label="Remove ' + short + ' from kept-clear days">×</button></span>'
+      : "";
+    html += '<th class="' + avoidCls.trim() + '">' + d + tag + "</th>";
+  });
   html += "</tr>";
   for (let h = START_HOUR; h < END_HOUR; h++) {
     const label = (h > 12 ? h - 12 : h) + ":00 " + (h >= 12 ? "PM" : "AM");
     html += '<tr><td class="time-label">' + label + "</td>";
-    for (let d = 0; d < 5; d++) html += '<td id="cell-' + d + "-" + h + '"></td>';
+    for (let d = 0; d < 5; d++) {
+      const avoidCls = avoidSet.has(shortDays[d]) ? " avoid-day-cell" : "";
+      html += '<td id="cell-' + d + "-" + h + '" class="' + avoidCls.trim() + '"></td>';
+    }
     html += "</tr>";
   }
   $("calendar").innerHTML = html;
+  $("calendar").querySelectorAll(".avoid-day-remove").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      removeAvoidDay(btn.dataset.day);
+    });
+  });
 }
 
 function assignOverlapColumns(cellItems) {
@@ -1338,10 +1647,45 @@ function renderCalendarFromWorkingCourses() {
     });
   }
 
+  renderOnlineCoursesBar();
   // Keep AI toolbar lock count in sync
   renderAIToolbar();
   // Conflict check deferred so it always wins over any status messages set by callers
   setTimeout(updateConflictStatus, 0);
+}
+
+function renderOnlineCoursesBar() {
+  const bar = $("onlineCoursesBar");
+  const list = $("onlineCoursesList");
+  const countEl = $("onlineCoursesCount");
+  if (!bar || !list) return;
+  const onlineCourses = workingCourses.filter((c) => c.online || !c.days || !c.days.length);
+  if (!onlineCourses.length) {
+    bar.style.display = "none";
+    return;
+  }
+  bar.style.display = "";
+  if (countEl) countEl.textContent = onlineCourses.length + " course" + (onlineCourses.length !== 1 ? "s" : "");
+  list.innerHTML = "";
+  for (const c of onlineCourses) {
+    const crnKey = String(c.crn ?? "");
+    const isLocked = lockedCrns.has(crnKey);
+    const chipClass = getChipForCourse(c.subject + c.courseNumber);
+    const card = document.createElement("div");
+    card.className = "online-course-card " + chipClass + (isLocked ? " locked" : "");
+    card.setAttribute("data-crn", crnKey);
+    card.innerHTML =
+      '<div class="online-course-main">' +
+        '<div class="online-course-code">' + escapeHtml(c.subject + " " + c.courseNumber) + (isLocked ? ' <span class="online-course-lock">🔒</span>' : "") + "</div>" +
+        '<div class="online-course-title">' + escapeHtml(c.title || "") + "</div>" +
+      "</div>" +
+      (isLocked
+        ? ""
+        : '<button class="online-course-remove" title="Remove" aria-label="Remove ' + escapeHtml(c.subject + " " + c.courseNumber) + '">✕</button>');
+    const removeBtn = card.querySelector(".online-course-remove");
+    if (removeBtn) removeBtn.addEventListener("click", (e) => { e.stopPropagation(); removeFromWorkingSchedule(crnKey); });
+    list.appendChild(card);
+  }
 }
 
 // ============================================================
@@ -1792,29 +2136,43 @@ function renderSavedScheduleOnCalendar(schedule) {
 function renderAIToolbar() {
   const hintEl = $("aiToolbarHint");
   const btn = $("aiLockAllBtn");
+  const clearBtn = $("aiClearAllBtn");
   if (!hintEl || !btn) return;
 
   const total = workingCourses.length;
   const locked = workingCourses.filter((c) => lockedCrns.has(String(c.crn))).length;
+  const unlocked = total - locked;
   const allLocked = total > 0 && locked === total;
 
   if (total === 0) {
-    hintEl.textContent = "Add courses in Build mode so the AI can see them";
+    hintEl.textContent = "Add courses in Build mode first so the AI has something to work around";
     btn.disabled = true;
+    if (clearBtn) clearBtn.disabled = true;
   } else if (allLocked) {
-    hintEl.textContent = "All " + total + " course" + (total !== 1 ? "s" : "") + " locked — AI can see them";
+    hintEl.textContent = "All " + total + " course" + (total !== 1 ? "s" : "") + " locked — AI will build around them";
     btn.disabled = true;
+    if (clearBtn) clearBtn.disabled = false;
   } else {
-    const unlocked = total - locked;
-    hintEl.textContent = locked > 0 ? locked + "/" + total + " locked" : unlocked + " unlocked course" + (unlocked !== 1 ? "s" : "") + " — AI won't see them";
+    hintEl.textContent = locked > 0
+      ? locked + " of " + total + " locked · AI may replace the other " + unlocked
+      : unlocked + " course" + (unlocked !== 1 ? "s" : "") + " unlocked · AI may replace " + (unlocked !== 1 ? "them" : "it");
     btn.disabled = false;
+    if (clearBtn) clearBtn.disabled = false;
   }
 }
 
 $("aiLockAllBtn")?.addEventListener("click", () => {
   for (const c of workingCourses) lockedCrns.add(String(c.crn));
   renderCalendarFromWorkingCourses();
-  addMessage("system", lockedCrns.size + " course" + (lockedCrns.size !== 1 ? "s" : "") + " locked. The AI can now see your full schedule.");
+});
+
+$("aiClearAllBtn")?.addEventListener("click", () => {
+  const removable = workingCourses.filter((c) => c.source !== "registered");
+  if (!removable.length) return;
+  workingCourses = workingCourses.filter((c) => c.source === "registered");
+  lockedCrns = new Set([...lockedCrns].filter((crn) => workingCourses.some((c) => String(c.crn) === crn)));
+  renderCalendarFromWorkingCourses();
+  updateSaveBtn();
 });
 
 // ============================================================
@@ -1860,6 +2218,380 @@ function removeCalendarBlock(label) {
   renderCalendarFromWorkingCourses();
 }
 
+// Persist a new avoid-day and keep profile in sync.
+function applyNewAvoidDay(day) {
+  if (!day || avoidDays.includes(day)) return;
+  avoidDays = [...avoidDays, day];
+  chrome.storage.local.set({ avoidDays });
+  if (studentProfile) studentProfile.avoidDays = avoidDays;
+  renderCalendarFromWorkingCourses();
+}
+
+// Remove an avoid-day and keep profile + storage in sync.
+function removeAvoidDay(day) {
+  if (!day || !avoidDays.includes(day)) return;
+  avoidDays = avoidDays.filter((d) => d !== day);
+  chrome.storage.local.set({ avoidDays });
+  if (studentProfile) studentProfile.avoidDays = avoidDays;
+  renderCalendarFromWorkingCourses();
+}
+
+// Look up the credit value for a CRN in the cached eligible data.
+// Defaults to 3 (most TXST courses) when unknown.
+function getCreditsForCrn(crn) {
+  if (cachedRawData?.eligible) {
+    for (const course of cachedRawData.eligible) {
+      const sec = (course.sections || []).find((s) => String(s.courseReferenceNumber) === String(crn));
+      if (sec) return sec.creditHourLow ?? 3;
+    }
+  }
+  return 3;
+}
+
+// Direct-add a rejected candidate by CRN. Bypasses the accept_suggestion
+// LLM roundtrip — the chip click is unambiguous.
+function addCandidateByCrn(crn) {
+  const cand = lastRejectedCandidates.get(String(crn));
+  if (!cand) {
+    addMessage("system", "That suggestion is no longer available — try asking again.");
+    return;
+  }
+  let title = cand.course;
+  let subject = (cand.course.split(" ")[0] || "").trim();
+  let courseNumber = (cand.course.split(" ")[1] || "").trim();
+  let credits = 3;
+  let online = false;
+  if (cachedRawData?.eligible) {
+    for (const course of cachedRawData.eligible) {
+      const sec = (course.sections || []).find((s) => String(s.courseReferenceNumber) === String(crn));
+      if (sec) {
+        title = course.sections[0]?.courseTitle || title;
+        subject = course.subject;
+        courseNumber = course.courseNumber;
+        credits = sec.creditHourLow ?? 3;
+        online = sec.instructionalMethod === "INT";
+        break;
+      }
+    }
+  }
+  addToWorkingSchedule({
+    crn: cand.crn,
+    subject,
+    courseNumber,
+    title,
+    days: cand.days || [],
+    beginTime: cand.start ? cand.start.slice(0, 2) + ":" + cand.start.slice(2) : null,
+    endTime: cand.end ? cand.end.slice(0, 2) + ":" + cand.end.slice(2) : null,
+    source: "ai",
+    online,
+    credits,
+  });
+  addMessage("system", `Added ${cand.course} to your working calendar.`);
+  updateSaveBtn();
+}
+
+// Resolve a free-text course reference ("GEO 2342") from the accept_suggestion
+// intent path back to the most recent matching rejected candidate.
+function addSuggestedByReference(ref) {
+  if (!ref) return;
+  for (const cand of lastRejectedCandidates.values()) {
+    if (cand.course === ref) { addCandidateByCrn(cand.crn); return; }
+  }
+  addMessage("system", `Couldn't find "${ref}" in recent suggestions. Click the Add button on the candidate chip instead.`);
+}
+
+// Render "Also considered" chips below a schedule response. Each chip
+// directly adds its course to the working calendar on click — no LLM roundtrip.
+function renderRejectedCandidates(candidates) {
+  if (!candidates || !candidates.length) return;
+  candidates.forEach((c) => { if (c.crn) lastRejectedCandidates.set(String(c.crn), c); });
+
+  const div = document.createElement("div");
+  div.className = "chat-message ai";
+  const details = candidates.map((c) => {
+    const time = c.days?.length ? c.days.join("/") + " " + formatChatTime(c.start) + "–" + formatChatTime(c.end) : "Online";
+    return '<div style="font-size:11px;margin:4px 0;opacity:0.85"><strong>' + c.course + "</strong> · CRN " + c.crn + " · " + time
+      + (c.wouldSatisfy ? ' · <em>' + c.wouldSatisfy + "</em>" : "")
+      + (c.reason ? '<br><span style="opacity:0.75">' + c.reason + "</span>" : "")
+      + "</div>";
+  }).join("");
+  const buttons = candidates.map((c) =>
+    '<button class="save-schedule-btn add-candidate-btn" data-crn="' + c.crn + '" style="margin:4px 4px 0 0">Add ' + c.course + '</button>'
+  ).join("");
+  div.innerHTML =
+    '<div class="sender">Also considered</div>' +
+    details +
+    '<div style="margin-top:6px">' + buttons + '</div>';
+  div.querySelectorAll(".add-candidate-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const crn = btn.getAttribute("data-crn");
+      addCandidateByCrn(crn);
+      btn.disabled = true;
+      btn.textContent = "Added";
+    });
+  });
+  $("chatMessages").appendChild(div);
+  $("chatMessages").scrollTop = $("chatMessages").scrollHeight;
+}
+
+// ─── Thinking panel ─────────────────────────────────────────────
+// Live trace of the hybrid pipeline. Appended before the AI's reply so
+// users can see what stage is running. Collapsible after it finishes.
+const STAGE_LABELS = {
+  intent: "Understanding request",
+  affinity: "Scoring career fit",
+  solve: "Building schedules",
+  relaxation: "Relaxing soft constraints",
+  rank: "Ranking tradeoffs",
+  validate: "Verifying no conflicts",
+  rationale: "Writing rationales",
+  advisor: "Drafting answer",
+};
+
+function createThinkingPanel() {
+  const div = document.createElement("div");
+  div.className = "chat-message system thinking-panel";
+  div.innerHTML =
+    '<div class="sender">Thinking…</div>' +
+    '<div class="thinking-steps" style="font-size:11px;line-height:1.5;opacity:0.85"></div>';
+  $("chatMessages").appendChild(div);
+  $("chatMessages").scrollTop = $("chatMessages").scrollHeight;
+
+  const stepsEl = div.querySelector(".thinking-steps");
+  const rows = new Map(); // stage → row element
+
+  function statusGlyph(status) {
+    if (status === "running") return "⋯";
+    if (status === "done") return "✓";
+    if (status === "error") return "✗";
+    return "•";
+  }
+
+  function update(entry) {
+    const label = STAGE_LABELS[entry.stage] || entry.stage;
+    const summary = entry.summary ? " — " + entry.summary : "";
+    const dur = entry.duration != null ? ` (${entry.duration}ms)` : "";
+    let html = '<span style="display:inline-block;width:14px">' + statusGlyph(entry.status) + "</span>"
+      + "<strong>" + label + "</strong>" + summary + dur
+      + (entry.error ? '<br><span style="color:#c44">' + entry.error + "</span>" : "");
+
+    // Phase 0 debug pane: when the rank stage reports a scoreBreakdown payload,
+    // expose the top-20 candidates and per-vector term weights under a collapsed
+    // <details> block. Intentionally raw — this is a debug surface for diagnosing
+    // why Top-1 beat Top-2, not a polished UI.
+    if (entry.rankBreakdown) {
+      const body = escapeHtml(JSON.stringify(entry.rankBreakdown, null, 2));
+      html += '<details style="margin-top:4px"><summary style="cursor:pointer;font-size:10px;opacity:0.75">rank breakdown (debug)</summary>'
+        + '<pre style="font-size:10px;max-height:320px;overflow:auto;background:#111;color:#ddd;padding:6px;border-radius:4px;white-space:pre-wrap">'
+        + body + "</pre></details>";
+    }
+
+    let row = rows.get(entry.stage);
+    if (!row) {
+      row = document.createElement("div");
+      rows.set(entry.stage, row);
+      stepsEl.appendChild(row);
+    }
+    row.innerHTML = html;
+    $("chatMessages").scrollTop = $("chatMessages").scrollHeight;
+  }
+
+  function escapeHtml(s) {
+    return String(s)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;");
+  }
+
+  function finalize() {
+    const senderEl = div.querySelector(".sender");
+    const total = Array.from(rows.values()).length;
+    senderEl.textContent = "Thinking · " + total + " steps (click to toggle)";
+    senderEl.style.cursor = "pointer";
+    stepsEl.style.display = "none";
+    senderEl.addEventListener("click", () => {
+      stepsEl.style.display = stepsEl.style.display === "none" ? "block" : "none";
+    });
+  }
+
+  return { update, finalize };
+}
+
+// Apply one action from handleUserTurn. Returns a short plain-text summary
+// suitable for pushing to conversation history (never raw JSON — the intent
+// call on turn 2 chokes on JSON embedded in user-facing history).
+function applyAction(action) {
+  switch (action.type) {
+    case "show_message": {
+      if (action.text?.trim()) addMessage("ai", action.text.trim());
+      if (action.followUp?.trim()) addMessage("ai", action.followUp.trim());
+      return [action.text, action.followUp].filter(Boolean).join(" ");
+    }
+    case "show_context_recap": {
+      renderContextRecap(action);
+      return action.recap ? "[Recap: " + action.recap + "]" : "";
+    }
+    case "show_schedules": {
+      if (action.summary?.trim()) addMessage("ai", action.summary.trim());
+      (action.schedules || []).forEach((s) => addScheduleOption(s));
+      if (action.followUp?.trim()) addMessage("ai", action.followUp.trim());
+      const names = (action.schedules || []).map((s) => s.label || s.name).join(", ");
+      return "[Proposed " + (action.schedules || []).length + " schedules: " + names + "]";
+    }
+    case "show_relaxation_notice": {
+      renderRelaxationNotice(action.relaxations || []);
+      return "[Relaxed: " + (action.relaxations || []).join("; ") + "]";
+    }
+    case "show_infeasible": {
+      renderInfeasible(action);
+      return "[Infeasible] " + (action.message || "");
+    }
+    case "show_rejected_candidates": {
+      renderRejectedCandidates(action.candidates || []);
+      const list = (action.candidates || []).map((c) => c.course + " (CRN " + c.crn + ")").join("; ");
+      return "[Also considered: " + list + "]";
+    }
+    case "add_calendar_block": {
+      applyNewCalendarBlocks([action.block]);
+      const b = action.block;
+      addMessage("system", "Calendar block saved: " + b.label + " " + (b.days || []).join("/") + " " + b.start + "–" + b.end);
+      return "[Added block " + b.label + "]";
+    }
+    case "add_avoid_day": {
+      applyNewAvoidDay(action.day);
+      addMessage("system", "Marked " + action.day + " as a day to keep class-free.");
+      return "[Marked " + action.day + " as avoid day]";
+    }
+    case "remove_avoid_day": {
+      removeAvoidDay(action.day);
+      addMessage("system", "Cleared " + action.day + " — classes allowed again.");
+      return "[Cleared avoid day " + action.day + "]";
+    }
+    case "reset_avoid_days": {
+      const prior = avoidDays.slice();
+      avoidDays = [];
+      chrome.storage.local.set({ avoidDays });
+      if (studentProfile) studentProfile.avoidDays = avoidDays;
+      renderCalendarFromWorkingCourses();
+      if (prior.length) addMessage("system", "Reset kept-clear days (was " + prior.join(", ") + ").");
+      return "[Reset avoid days]";
+    }
+    case "lock_course": {
+      lockedCrns.add(String(action.crn));
+      renderCalendarFromWorkingCourses();
+      return "[Locked CRN " + action.crn + "]";
+    }
+    case "unlock_course": {
+      lockedCrns.delete(String(action.crn));
+      renderCalendarFromWorkingCourses();
+      return "[Unlocked CRN " + action.crn + "]";
+    }
+    case "add_suggested_course": {
+      addSuggestedByReference(action.reference);
+      return "[Accepted suggestion " + action.reference + "]";
+    }
+    default:
+      return "";
+  }
+}
+
+// Show the intent's recap so the student can catch misreads early.
+// Low-confidence recaps surface ambiguities inline.
+function renderContextRecap(action) {
+  if (!action.recap?.trim()) return;
+  const conf = typeof action.confidence === "number" ? action.confidence : 1;
+  const ambig = action.ambiguities || [];
+  const div = document.createElement("div");
+  div.className = "chat-message system";
+  let html = '<div class="sender">Got it — here\'s what I heard</div>'
+    + '<div style="font-size:12px;line-height:1.4">' + escapeHtml(action.recap) + "</div>";
+  if (conf < 0.7 || ambig.length) {
+    const items = ambig.length ? ambig.map((a) => "<li>" + escapeHtml(a) + "</li>").join("") : "";
+    html += '<div style="font-size:11px;margin-top:6px;opacity:0.8">'
+      + (items ? "Not sure about:<ul style=\"margin:4px 0 0 16px\">" + items + "</ul>" : "")
+      + (conf < 0.7 ? "<em>Correct me if any of that is off.</em>" : "")
+      + "</div>";
+  }
+  div.innerHTML = html;
+  $("chatMessages").appendChild(div);
+  $("chatMessages").scrollTop = $("chatMessages").scrollHeight;
+}
+
+function renderRelaxationNotice(relaxations) {
+  if (!relaxations.length) return;
+  const items = relaxations.map((r) => "<li>" + escapeHtml(r) + "</li>").join("");
+  const div = document.createElement("div");
+  div.className = "chat-message system";
+  div.innerHTML = '<div class="sender">Had to relax some preferences</div>'
+    + '<div style="font-size:11px">Couldn\'t satisfy every soft preference at once — here\'s what I gave on:</div>'
+    + '<ul style="margin:4px 0 0 16px;font-size:11px">' + items + "</ul>";
+  $("chatMessages").appendChild(div);
+  $("chatMessages").scrollTop = $("chatMessages").scrollHeight;
+}
+
+function renderInfeasible(action) {
+  const suggestions = action.suggestions || [];
+  const items = suggestions.map((s) => "<li>" + escapeHtml(s) + "</li>").join("");
+  const diag = action.diagnostics;
+
+  let diagHtml = "";
+  if (diag && Array.isArray(diag.attempts) && diag.attempts.length) {
+    const rows = diag.attempts.map((a, i) => {
+      const c = a.constraints || {};
+      const cons = [
+        `credits ${c.minCredits}–${c.maxCredits}`,
+        c.hardAvoidDays?.length ? `hardAvoid ${c.hardAvoidDays.join("/")}` : null,
+        c.calendarBlocks ? `${c.calendarBlocks} block${c.calendarBlocks !== 1 ? "s" : ""}` : null,
+        c.noEarlierThan ? `after ${c.noEarlierThan}` : null,
+      ].filter(Boolean).join(" · ");
+      const elim = (a.eliminatedCourses || []).map((e) => {
+        const r = e.dropReasons || {};
+        const parts = [];
+        if (r.missingData) parts.push(`TBA×${r.missingData}`);
+        if (r.fixedConflict) parts.push(`block×${r.fixedConflict}`);
+        if (r.hardAvoidDay) parts.push(`avoidDay×${r.hardAvoidDay}`);
+        return escapeHtml(e.course) + " (" + parts.join(" ") + ")";
+      }).join(", ");
+      const perCourseTable = (a.perCourseCounts || []).map((pc) => {
+        const r = pc.dropReasons || {};
+        const drops = [];
+        if (r.missingData) drops.push(`TBA${r.missingData}`);
+        if (r.fixedConflict) drops.push(`block${r.fixedConflict}`);
+        if (r.hardAvoidDay) drops.push(`avoid${r.hardAvoidDay}`);
+        const dropStr = drops.length ? " [-" + drops.join(",-") + "]" : "";
+        return escapeHtml(pc.course) + ": " + pc.viable + "/" + pc.original + dropStr;
+      }).join(" · ");
+      const nodeInfo = a.nodesExplored != null
+        ? a.nodesExplored + " nodes" + (a.capHit ? " (CAP HIT)" : "")
+        : "";
+      return "<div style=\"font-size:11px;margin:6px 0;border-left:2px solid var(--border);padding-left:6px\">"
+        + "<strong>" + (i + 1) + ". " + escapeHtml(a.label) + "</strong> — "
+        + a.viableCourses + " courses viable · " + a.viableSections + " sections · "
+        + a.results + " schedules · " + nodeInfo
+        + "<br><span style=\"opacity:0.7\">" + escapeHtml(cons) + "</span>"
+        + (elim ? "<br><span style=\"opacity:0.7\">fully eliminated: " + elim + "</span>" : "")
+        + (perCourseTable ? "<br><span style=\"opacity:0.7;font-family:monospace;font-size:10px\">" + perCourseTable + "</span>" : "")
+        + "</div>";
+    }).join("");
+    diagHtml = "<details style=\"margin-top:8px;font-size:11px\"><summary style=\"cursor:pointer;opacity:0.8\">Diagnostics — "
+      + diag.attempts.length + " attempt" + (diag.attempts.length !== 1 ? "s" : "") + " across "
+      + diag.eligibleCount + " eligible courses</summary>" + rows + "</details>";
+  }
+
+  const div = document.createElement("div");
+  div.className = "chat-message ai";
+  div.innerHTML = '<div class="sender">No feasible schedule</div>'
+    + '<div style="font-size:12px">' + escapeHtml(action.message || "I couldn't find a schedule.") + "</div>"
+    + (items ? '<ul style="margin:6px 0 0 16px;font-size:11px">' + items + "</ul>" : "")
+    + diagHtml;
+  $("chatMessages").appendChild(div);
+  $("chatMessages").scrollTop = $("chatMessages").scrollHeight;
+}
+
+function escapeHtml(s) {
+  return String(s || "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
 async function sendChat() {
   const input = $("chatInput").value.trim();
   if (!input) return;
@@ -1873,21 +2605,36 @@ async function sendChat() {
     analysisResults = await runAnalysisAndWait();
     if (analysisResults._skippedStaleTerm) { addMessage("system", "The term changed while loading. Send your message again."); $("statusBar").textContent = ""; return; }
     cachedRawData = analysisResults; eligibleCourses = analysisResults.eligible || [];
-    if (!analysisResults.eligible || !analysisResults.eligible.length) { addMessage("system", "No eligible courses found for this term."); $("statusBar").textContent = "No eligible courses found"; return; }
+    if (!analysisResults.eligible || !analysisResults.eligible.length) {
+      addMessage("system", "No eligible courses were found for this term. This usually means your DegreeWorks audit hasn't loaded yet, or every remaining requirement is already satisfied. Try refreshing the Build panel.");
+      $("statusBar").textContent = "No eligible courses found";
+      return;
+    }
     addMessage("system", `Found ${analysisResults.eligible.length} eligible courses. Sending to AI...`);
   }
 
   const { openaiKey } = await chrome.storage.local.get("openaiKey");
-  if (!openaiKey) { addMessage("system", 'No OpenAI API key found. Run this once in your browser console:\n\nchrome.storage.local.set({ openaiKey: "sk-..." })'); return; }
+  if (!openaiKey) {
+    addMessage("system", "No OpenAI API key is configured for this extension. Open the browser console on this page and run:\n\nchrome.storage.local.set({ openaiKey: \"sk-...\" })\n\nThen reload the page and try again.");
+    return;
+  }
 
-  $("statusBar").textContent = "Thinking...";
+  // Generation counter: if a later sendChat starts OR the term changes while
+  // this turn is in flight, bail before dispatching any actions so we never
+  // mutate the UI for a stale term.
+  const myGen = ++chatGeneration;
+  const termAtStart = currentTerm;
+  const stale = () => chatGeneration !== myGen || currentTerm !== termAtStart;
+
+  $("statusBar").textContent = "Thinking…";
+
+  const thinking = createThinkingPanel();
+
   try {
-    const isFirstTurn = conversationHistory.length === 0;
-    const lockedList   = getLockedForLLM();
-    const lockedCredits = getLockedCredits(lockedList);
-    const maxNew        = Math.max(0, 18 - lockedCredits);
+    const lockedList = getLockedForLLM();
+    // Attach credits so handleUserTurn can enforce the 18-credit budget.
+    const lockedCourses = lockedList.map((c) => ({ ...c, credits: getCreditsForCrn(c.crn) }));
 
-    // Build dynamic system prompt with the live student profile and credit budget.
     const profile = studentProfile || buildStudentProfile({
       name: currentStudent?.name || "Student",
       major: (currentStudent?.major || "") + (currentStudent?.degree ? " — " + currentStudent.degree : ""),
@@ -1895,148 +2642,136 @@ async function sendChat() {
       catalogYear: new Date().getFullYear(),
       completedHours: null, remainingHours: null,
       calendarBlocks,
+      avoidDays,
     });
-    const systemPrompt = buildSystemPrompt(profile, [], lockedCredits);
+    // Always sync with the latest persisted state.
+    profile.calendarBlocks = calendarBlocks;
+    profile.avoidDays = avoidDays;
 
-    let userMessage;
-    if (isFirstTurn) {
-      const compressed  = compressForLLM(cachedRawData);
-      const preFiltered = applyPreFilter(compressed, lockedList, calendarBlocks);
-      const lockedBlock = lockedList.length > 0
-        ? `LOCKED COURSES — ${lockedCredits} credits — ALREADY ON CALENDAR, do NOT include in courses[]:\n${JSON.stringify(lockedList)}\n\n`
-          + `CREDIT BUDGET: ${lockedCredits} locked + max ${maxNew} new = 18 total cap.\n\n`
-        : "";
-      userMessage = `${lockedBlock}ELIGIBLE COURSES TO SCHEDULE:\n${JSON.stringify(preFiltered)}\n\nMy preferences: ${input}`;
-    } else {
-      const lockedNote = lockedList.length > 0
-        ? `[Locked (${lockedCredits} cr): ${lockedList.map((c) => c.course + " CRN " + c.crn).join(", ")} — credit budget remaining: ${maxNew} cr]\n\n`
-        : "";
-      userMessage = lockedNote + input;
+    const { actions, updatedProfile } = await handleUserTurn({
+      userMessage: input,
+      rawData: cachedRawData,
+      studentProfile: profile,
+      conversationHistory,
+      lockedCourses,
+      ragChunks: [],
+      apiKey: openaiKey,
+      onTrace: (entry) => { if (!stale()) thinking.update(entry); },
+    });
+
+    thinking.finalize();
+    if (stale()) return;
+
+    // Record the user turn now that we know it completed without a stale bail.
+    conversationHistory.push({ role: "user", content: input });
+
+    // Dispatch actions; collect a short plain-text assistant summary for history.
+    const assistantParts = [];
+    for (const action of actions) {
+      if (stale()) return;
+      const summary = applyAction(action);
+      if (summary) assistantParts.push(summary);
     }
-    conversationHistory.push({ role: "user", content: userMessage });
-
-    let validSchedules = [], attempts = 0;
-    const MAX_ATTEMPTS = 3;
-    let lastConflictDetails = [];
-    let finalResult = null;
-
-    while (validSchedules.length === 0 && attempts < MAX_ATTEMPTS) {
-      attempts++;
-      if (attempts > 1) {
-        const conflictDetails = lastConflictDetails.map((d) => `"${d.name}": ${d.course1} (${d.days1} ${d.start1}-${d.end1}) conflicts with ${d.course2} (${d.days2} ${d.start2}-${d.end2})`).join("; ");
-        conversationHistory.push({ role: "user", content: `Your previous schedules had time conflicts. Regenerate all 3 fixing: ${conflictDetails}. Double-check every pair of in-person sections that share any day.` });
-        $("statusBar").textContent = `Fixing conflicts (attempt ${attempts})...`;
-      }
-      const response = await fetch("https://api.openai.com/v1/chat/completions", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${openaiKey}` },
-        body: JSON.stringify({ model: "gpt-4o", response_format: { type: "json_object" }, messages: [{ role: "system", content: systemPrompt }, ...conversationHistory] }),
-      });
-      const data = await response.json();
-      if (data.error) throw new Error(data.error.message);
-      const result = JSON.parse(data.choices[0].message.content);
-      conversationHistory.push({ role: "assistant", content: data.choices[0].message.content });
-      finalResult = result;
-
-      // ── Calendar block detection (any mode) ──────────────────────
-      // Only treat a block as "new" if its label isn't already saved. The AI
-      // echoes previously returned blocks in later turns (they're in history),
-      // which would falsely suppress schedules and spam the "blocks saved" notice.
-      const existingLabels = new Set(calendarBlocks.map((b) => b.label.toLowerCase()));
-      const newBlocks = (result.calendarBlocks || []).filter((b) => !existingLabels.has((b.label || "").toLowerCase()));
-      if (newBlocks.length) {
-        applyNewCalendarBlocks(newBlocks);
-        const labels = newBlocks.map((b) => b.label).join(", ");
-        addMessage("system", `Calendar block${newBlocks.length > 1 ? "s" : ""} saved: ${labels}. These times are now blocked on your calendar.`);
-      }
-
-      // ── Advisor / mixed: show response text ──────────────────────
-      if (result.response && result.response.trim()) {
-        addMessage("ai", result.response.trim());
-      }
-
-      // ── Scheduler / mixed: validate and render schedules ─────────
-      // IMPORTANT: if new calendar blocks were returned in THIS response, the
-      // eligible course list was already pre-filtered BEFORE we knew about those
-      // blocks, so any schedules the AI returned may conflict with them. Discard
-      // the schedules and prompt the user to re-ask — on the next turn the blocks
-      // will be in calendarBlocks and properly applied to applyPreFilter.
-      const schedules = result.schedules || [];
-      if (schedules.length && newBlocks.length) {
-        const blockSummary = newBlocks.map((b) => `${b.label} (${b.days.join("/")} ${b.start}–${b.end})`).join(", ");
-        addMessage("system", `Blocks saved (${blockSummary}) — they're now on your calendar. The schedules above were built before these constraints were applied and may overlap them. Send your request again and I'll build schedules that avoid these windows.`);
-        // Still break so we don't loop; user re-sends
-        break;
-      }
-
-      if (schedules.length) {
-        const conflicted = []; lastConflictDetails = [];
-        for (const schedule of schedules) {
-          const conflict = findFirstConflict(schedule.courses || []);
-          if (conflict) {
-            conflicted.push(schedule.name);
-            lastConflictDetails.push({ name: schedule.name, course1: conflict.a.course, days1: conflict.a.days?.join("/"), start1: conflict.a.start, end1: conflict.a.end, course2: conflict.b.course, days2: conflict.b.days?.join("/"), start2: conflict.b.start, end2: conflict.b.end });
-          } else {
-            validSchedules.push(schedule);
-          }
-        }
-        if (conflicted.length > 0 && validSchedules.length === 0 && attempts < MAX_ATTEMPTS) {
-          $("statusBar").textContent = "Conflicts found, retrying..."; continue;
-        }
-        if (conflicted.length > 0) addMessage("system", `⚠ ${conflicted.join(", ")} had time conflicts and were removed. Showing ${validSchedules.length} valid schedule(s).`);
-        validSchedules.forEach((s) => addScheduleOption(s));
-        if (validSchedules.length === 0 && schedules.length > 0) addMessage("system", "Could not generate conflict-free schedules. Try simplifying your preferences.");
-      }
-
-      // ── No schedules returned (pure advisor mode) — nothing extra needed
-      break;
+    if (assistantParts.length) {
+      conversationHistory.push({ role: "assistant", content: assistantParts.join("\n") });
     }
 
-    if (finalResult?.followUpQuestion && (validSchedules.length > 0 || finalResult.mode === "advisor")) {
-      addMessage("ai", finalResult.followUpQuestion);
+    // Keep the global profile aligned with the merged state so the next turn
+    // sees accurate calendarBlocks / avoidDays.
+    if (studentProfile) {
+      studentProfile.calendarBlocks = updatedProfile.calendarBlocks;
+      studentProfile.avoidDays = updatedProfile.avoidDays;
     }
     $("statusBar").textContent = "Ready";
-  } catch (err) { console.error(err); addMessage("system", "Something went wrong: " + err.message); $("statusBar").textContent = "Error"; }
+  } catch (err) {
+    thinking.finalize();
+    if (stale()) return;
+    console.error(err);
+    const msg = String(err?.message || err);
+    let friendly;
+    if (/api key|401|unauthorized|invalid_api_key/i.test(msg)) {
+      friendly = "OpenAI rejected the API key. Reset it with: chrome.storage.local.set({ openaiKey: \"sk-...\" })";
+    } else if (/rate limit|429/i.test(msg)) {
+      friendly = "OpenAI rate-limited the request. Wait a few seconds and try again.";
+    } else if (/fetch|NetworkError|Failed to fetch/i.test(msg)) {
+      friendly = "Couldn't reach OpenAI. Check your internet connection and try again.";
+    } else {
+      friendly = "Something went wrong: " + msg;
+    }
+    addMessage("system", friendly);
+    $("statusBar").textContent = "Error";
+  }
 }
 
 function addScheduleOption(schedule) {
-  const { name, rationale, courses } = schedule;
+  // v3 shape: label (e.g. "Career-focused"), tagline, rationale, courses, honoredPreferences
+  // v2 shape: name, rationale, courses — still handled for backwards-compat
+  const label = schedule.label || schedule.name || "Schedule";
+  const tagline = schedule.tagline || "";
+  const rationale = schedule.rationale || "";
+  const courses = schedule.courses || [];
+  const honored = schedule.honoredPreferences || [];
+  const unhonored = schedule.unhonoredPreferences || [];
   const lockedList = getLockedForLLM();
 
-  // Compute credits ourselves — don't trust the AI's totalCredits field, which
-  // has proven inaccurate. Locked courses default to 3 cr each (same assumption
-  // as getLockedCredits); new courses use the credits field the AI returned.
+  // Compute credits ourselves — the AI's totalCredits has proven inaccurate.
   const lockedCr = getLockedCredits(lockedList);
-  const newCr    = (courses || []).reduce((sum, c) => sum + (typeof c.credits === "number" ? c.credits : 3), 0);
+  const newCr    = courses.reduce((sum, c) => sum + (typeof c.credits === "number" ? c.credits : 3), 0);
   const displayCredits = lockedCr + newCr;
 
   const lockedLines = lockedList.map((r) => {
     const time = r.days?.length ? r.days.join("/") + " " + formatChatTime(r.start) + "–" + formatChatTime(r.end) : "Online";
-    return '<div style="margin:4px 0;opacity:0.6;border-left:2px solid var(--border);padding-left:6px"><strong>' + r.course + "</strong> — " + (r.title || "") + '<br><span style="font-size:11px">Locked · ' + time + "</span></div>";
+    return '<div style="margin:4px 0;opacity:0.6;border-left:2px solid var(--border);padding-left:6px"><strong>' + escapeHtml(r.course) + "</strong> — " + escapeHtml(r.title || "") + '<br><span style="font-size:11px">Locked · ' + escapeHtml(time) + "</span></div>";
   }).join("");
-  const courseLines = (courses || []).map((c) => {
+  const courseLines = courses.map((c) => {
     const time = c.online ? "Online" : (c.days?.join("/") + " " + formatChatTime(c.start) + "–" + formatChatTime(c.end));
-    return '<div style="margin:4px 0"><strong>' + c.course + "</strong> — " + c.title + '<br><span style="font-size:11px;opacity:0.8">CRN: ' + c.crn + " · " + time + (c.requirementSatisfied ? " · " + c.requirementSatisfied : "") + "</span></div>";
+    const affinityBadge = typeof c.affinity === "number" && c.affinity >= 0.7
+      ? ' <span style="font-size:10px;padding:1px 4px;border-radius:3px;background:var(--accent-soft,#e8f0ff);opacity:0.9" title="' + escapeHtml(c.affinityReason || "") + '">★ ' + c.affinity.toFixed(2) + "</span>"
+      : "";
+    return '<div style="margin:4px 0"><strong>' + escapeHtml(c.course) + "</strong> — " + escapeHtml(c.title || "") + affinityBadge + '<br><span style="font-size:11px;opacity:0.8">CRN: ' + escapeHtml(String(c.crn)) + " · " + escapeHtml(time) + (c.requirementSatisfied ? " · " + escapeHtml(c.requirementSatisfied) : "") + "</span></div>";
   }).join("");
+  const honoredHtml = honored.length
+    ? '<div style="font-size:11px;margin:6px 0;opacity:0.85"><strong>Honored:</strong> ' + honored.map(escapeHtml).join(" · ") + "</div>"
+    : "";
+  const unhonoredHtml = unhonored.length
+    ? '<div style="font-size:11px;margin:6px 0;color:var(--warn,#b07500)"><strong>Couldn\'t honor:</strong> ' + unhonored.map(escapeHtml).join(" · ") + "</div>"
+    : "";
+  const taglineHtml = tagline
+    ? '<div style="font-size:11px;font-style:italic;opacity:0.75;margin-bottom:4px">' + escapeHtml(tagline) + "</div>"
+    : "";
+
   const div = document.createElement("div");
   div.className = "chat-message ai";
   div.innerHTML =
-    '<div class="sender">' + name + " · " + displayCredits + " credits</div>" +
-    '<div style="font-size:11px;margin-bottom:8px;opacity:0.85">' + rationale + "</div>" +
+    '<div class="sender">' + escapeHtml(label) + " · " + displayCredits + " credits</div>" +
+    taglineHtml +
+    '<div style="font-size:12px;margin-bottom:6px">' + escapeHtml(rationale) + "</div>" +
+    honoredHtml +
+    unhonoredHtml +
     lockedLines + courseLines + "<br>" +
     '<button class="save-schedule-btn add-to-calendar-btn">Add to Calendar</button>' +
     '<button class="save-schedule-btn lock-all-btn" style="margin-left:6px">Lock All</button>';
-  div.querySelector(".add-to-calendar-btn").addEventListener("click", () => {
-    for (const c of (courses || [])) {
+  div.querySelector(".add-to-calendar-btn").addEventListener("click", (e) => {
+    for (const c of courses) {
       addToWorkingSchedule({ crn: c.crn, subject: c.course.split(" ")[0], courseNumber: c.course.split(" ")[1], title: c.title, days: c.days || [], beginTime: c.start ? c.start.slice(0, 2) + ":" + c.start.slice(2) : null, endTime: c.end ? c.end.slice(0, 2) + ":" + c.end.slice(2) : null, source: "ai", online: c.online || false });
     }
-    addMessage("system", name + " added to calendar. Switch to Build mode to lock, remove, or modify courses.");
     updateSaveBtn();
+    // Ack the action on the button itself so the user sees confirmation
+    // without bloating the chat log or yanking the scroll position.
+    const btn = e.currentTarget;
+    const orig = btn.textContent;
+    btn.textContent = "Added";
+    btn.disabled = true;
+    setTimeout(() => { btn.textContent = orig; btn.disabled = false; }, 1800);
   });
-  div.querySelector(".lock-all-btn").addEventListener("click", () => {
-    for (const c of (courses || [])) lockedCrns.add(c.crn);
+  div.querySelector(".lock-all-btn").addEventListener("click", (e) => {
+    for (const c of courses) lockedCrns.add(c.crn);
     renderCalendarFromWorkingCourses();
-    addMessage("system", "All courses in " + name + " locked.");
+    const btn = e.currentTarget;
+    const orig = btn.textContent;
+    btn.textContent = "Locked";
+    btn.disabled = true;
+    setTimeout(() => { btn.textContent = orig; btn.disabled = false; }, 1800);
   });
   $("chatMessages").appendChild(div);
   $("chatMessages").scrollTop = $("chatMessages").scrollHeight;
@@ -2137,6 +2872,7 @@ function applyStudentInfoToUI(student) {
     completedCourses: [],   // not available from this endpoint
     holds:            [],   // not available from this endpoint
     calendarBlocks,         // loaded from chrome.storage earlier
+    avoidDays,              // loaded from chrome.storage earlier
     careerGoals:      null, // populated when the student tells the AI
     advisingNotes:    null,
   });
@@ -2193,26 +2929,15 @@ function toggleOverview() {
 
 /**
  * Check workingCourses for any time overlap on shared days.
- * workingCourses use "HH:MM" colon format for beginTime/endTime
- * (different from LLM courses which use 4-char "HHMM" strings).
+ * Delegates to BP.findOverlapPair (scheduleGenerator.js) so the solver's
+ * validator and the UI's status bar share one implementation. That helper
+ * correctly skips entries with `online: true` even when Banner left phantom
+ * meeting data on the section (Bug 5, 2026-04-21).
  */
 function detectWorkingConflict() {
-  function toMin(t) {
-    if (!t) return null;
-    const p = t.split(":");
-    return p.length === 2 ? parseInt(p[0]) * 60 + parseInt(p[1]) : null;
-  }
-  for (let i = 0; i < workingCourses.length; i++) {
-    const a = workingCourses[i];
-    const aS = toMin(a.beginTime), aE = toMin(a.endTime);
-    if (!a.days?.length || aS === null || aE === null) continue;
-    for (let j = i + 1; j < workingCourses.length; j++) {
-      const b = workingCourses[j];
-      const bS = toMin(b.beginTime), bE = toMin(b.endTime);
-      if (!b.days?.length || bS === null || bE === null) continue;
-      if (!a.days.some((d) => b.days.includes(d))) continue;
-      if (aS < bE && bS < aE) return { a, b };
-    }
+  const BP = window.BP || {};
+  if (typeof BP.findOverlapPair === "function") {
+    return BP.findOverlapPair(workingCourses);
   }
   return null;
 }

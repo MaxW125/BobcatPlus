@@ -1,226 +1,319 @@
-# Bobcat Plus — CLAUDE.md
+# Bobcat Plus — [CLAUDE.md](http://CLAUDE.md)
 
 AI-powered schedule planner Chrome extension for Texas State University.
-Scrapes Banner (registration) and DegreeWorks (degree audit) to show
-what courses a student still needs, which are open this term, and lets
+Scrapes Banner (registration) and DegreeWorks (degree audit); shows a
+student what courses they still need, which are open this term, and lets
 an AI or the student build a conflict-free weekly schedule.
 
----
-
-## Project layout
-
-```
-extension/
-  manifest.json       MV3 manifest — permissions, host_permissions
-  background.js       Service worker: degree audit parsing, Banner API calls,
-                      caching, session mutex, prereq checking, plan management
-  tab.js              Full-page UI: calendar renderer, eligible course list,
-                      AI chat panel, schedule save/load, modal
-  tab.html            Shell HTML for the full-page tab
-  tab.css             All styles (CSS custom properties, chip colors, panels)
-  popup.html/js       Small toolbar popup (minimal — mostly defers to tab)
-  facultyScraper.js   RateMyProfessor / faculty directory scraping
-  courseColors.js     Deterministic chip color assignment per course
-  images/             TXST star logo, generic profile avatar
-```
+This file is the router. Read it first in every new session, then follow
+the links below for depth.
 
 ---
 
-## Architecture
+## Where to read next
 
-### Two separate execution contexts
 
-| Context | File | Talks to |
-|---|---|---|
-| Service worker | `background.js` | DegreeWorks API, Banner API, chrome.storage |
-| Tab page | `tab.js` | background.js via chrome.runtime.sendMessage |
+| For…                                                         | Read                                                                             |
+| ------------------------------------------------------------ | -------------------------------------------------------------------------------- |
+| Current state, what just shipped, what's next                | `HANDOFF.md`                                                                     |
+| *Why* we agreed to do things this way (ADR log, append-only) | `docs/decisions.md` — **if this and another doc disagree, `decisions.md` wins.** |
+| Per-bug postmortems + fix plans                              | `docs/bug*-diagnosis.md` (incl. Bug 8 login popup / `docs/bug8-banner-half-auth-login-popup-diagnosis.md`) |
+| Phase / feature RFCs                                         | `docs/*-rfc.md` (`requirement-graph-rfc`, `METRICS`, `advising-flow`)            |
+
+
+---
+
+## Two execution contexts (hard rule)
+
+
+| Context        | File                      | Talks to                                            |
+| -------------- | ------------------------- | --------------------------------------------------- |
+| Service worker | `extension/background.js` | DegreeWorks API, Banner API, `chrome.storage.local` |
+| Tab page       | `extension/tab.js`        | `background.js` via `chrome.runtime.sendMessage`    |
+
 
 **Never** import tab.js functions into background.js or vice versa. They
-communicate only through message passing.
-
-### Session mutex — critical
-
-Banner's registration endpoints are stateful: every POST to
-`term/search?mode=search` sets server-side session state that the next
-`getResults` call reads. Parallel calls corrupt each other.
-
-All Banner POSTs in background.js are wrapped in `withSessionLock`:
-
-```js
-let sessionQueue = Promise.resolve();
-function withSessionLock(fn) {
-  const task = sessionQueue.then(fn, fn); // fn runs after previous task settles
-  sessionQueue = task.then(() => {}, () => {}); // swallow rejection so queue continues
-  return task;
-}
-```
-
-tab.js has an identical `queueRegistrationFetch` / `registrationFetchQueue`
-for its own `getCurrentSchedule` calls (tab and background share the
-Banner session cookie but run in different JS contexts, so they each
-need their own queue).
-
-**Rule:** any new Banner fetch that calls `term/search` or `getResults`
-MUST go inside `withSessionLock` (background) or `queueRegistrationFetch`
-(tab). Do not add bare fetches to these endpoints.
-
-### Analysis cancellation
-
-Long-running analyses (searching 10–20 courses sequentially) must bail
-when the user switches terms. Pattern:
-
-```js
-let analysisGeneration = 0;
-// On term change: bump generation, send cancelAnalysis, clear UI
-chrome.runtime.sendMessage({ action: "cancelAnalysis" });
-
-// In runAnalysis:
-const gen = ++analysisGeneration;
-const isCurrent = () => analysisGeneration === gen;
-const bail = () => !isCurrent();
-// ... after every await:
-if (bail()) return;
-```
-
-### Caching (chrome.storage.local)
-
-```js
-const CACHE_TTL = {
-  course: 1h,    // Banner section search results (seats change)
-  prereq: 24h,   // Prerequisites HTML (fixed once schedule publishes)
-  desc:   7d,    // Course descriptions (static)
-  terms:  24h,   // Term list
-};
-```
-
-Cache keys: `course|{term}|{subject}|{courseNumber}`, `prereq|{term}|{crn}`,
-`desc|{term}|{crn}`.
-
-Use `cacheGet(key, ttl)` / `cacheSet(key, data)` — never write to
-chrome.storage.local directly for course data.
+share a Banner session cookie but run in separate JS contexts. Communicate
+only through message passing.
 
 ---
 
-## Key data flows
+## The load-bearing invariants (break at your peril)
 
-### Eligible course pipeline
+1. **Session mutex.** Every Banner call that touches `term/search` or
+  `getResults` goes through `withSessionLock` (background) or
+   `queueRegistrationFetch` (tab). Parallel calls corrupt Banner's
+   per-term session state silently. Any new Banner fetch must join one
+   of these queues.
+2. `**bail()` checks in `runAnalysis`.** Every `await` in `runAnalysis`
+  is followed by `if (bail()) return`. Removing any of these lets a
+   stale term analysis mutate the UI after the user switches terms.
+3. **Bounded pool + timeout on per-CRN Banner fetches.** Prereq,
+  description, and (soon) restriction fetches go through
+   `self.BPPerf.mapPool(coursesWithSections, ≤6, mapper)` and each inner
+   fetch uses `self.BPPerf.fetchWithTimeout(url, opts, ≥12s)`. Unbounded
+   `Promise.all` + raw `fetch` is what caused the 4-minute prereq hang
+   — see the Bug 4 / perf fix in `HANDOFF.md`. Do not revert.
+4. **Affinity cache wipe per turn** (`handleUserTurn`). Without it,
+  career keywords from a prior turn silently bias the next one.
+5. **Jaccard tiered dedup in `pickTop3`.** Do not simplify to
+  section-signature-only — regresses the "same courses, different lab"
+   bug (Phase 0 fix).
+6. `**validateSchedule()` is defense in depth, not the enforcer.** The
+  CSP solver is supposed to guarantee no conflicts. If `validateSchedule`
+   ever fires, the solver is wrong — fix the solver, don't silence the
+   check.
+
+---
+
+## File map
+
+### Extension runtime code
+
+
+| File                                                | Role                                                                                                                     |
+| --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| `extension/manifest.json`                           | MV3 manifest — permissions, host_permissions.                                                                            |
+| `extension/background.js`                           | Service worker. Audit fetch, Banner search (subject-batch + per-course), prereqs, cache, session mutex, plan management. |
+| `extension/tab.js`                                  | Full-page UI. Calendar renderer, chat panel, eligible list, working schedule.                                            |
+| `extension/tab.html` / `tab.css` / `extension/css/` | Shell + styles. CSS custom properties, not hard-coded colors.                                                            |
+| `extension/popup.html` / `extension/popup.js`       | Toolbar popup. Mostly defers to tab.                                                                                     |
+| `extension/scheduleGenerator.js`                    | Whole AI pipeline. Attached to `window.BP`. Plain script, no ESM.                                                        |
+| `extension/facultyScraper.js`                       | RateMyProfessor / faculty directory scraping.                                                                            |
+| `extension/courseColors.js`                         | Deterministic chip color assignment.                                                                                     |
+
+
+### Pure modules (service-worker via `importScripts`, also Node-unit-testable)
+
+
+| File                                          | Exports                                                                 | Role                                                                                                                                                                         |
+| --------------------------------------------- | ----------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `extension/requirements/graph.js`             | `BPReq.`* primitives                                                    | RequirementGraph node kinds, factories, traversal, invariants.                                                                                                               |
+| `extension/requirements/txstFromAudit.js`     | `BPReq.buildGraphFromAudit`, `BPReq.deriveEligible`                     | TXST DegreeWorks adapter. **Source of truth for `needed[]*`* (per D17). Legacy `findNeeded` is fallback only.                                                                |
+| `extension/requirements/wildcardExpansion.js` | `BPReq.expandAuditWildcards`, `BPReq.normalizeCourseInformationCourses` | Pure orchestrator + normalizer for DW `course-link` responses. Handles `except` subtraction (Bug 4 Layer C).                                                                 |
+| `extension/performance/concurrencyPool.js`    | `BPPerf.mapPool`, `BPPerf.fetchWithTimeout`                             | Bounded concurrency + AbortController-based fetch timeout. Inline fallbacks in `background.js` mirror these so a failed `importScripts` cannot regress to unbounded fan-out. |
+
+
+---
+
+## Cache (`chrome.storage.local`)
+
+All reads through `cacheGet(key, ttl)`, writes through `cacheSet(key, data)`.
+Never write raw.
+
+
+| Key pattern    | TTL       | Populated by     | Notes           |
+| -------------- | --------- | ---------------- | --------------- |
+| `course        | {term}    | {subject}        | {courseNumber}` |
+| `subjectSearch | v2        | {term}           | {subject}`      |
+| `prereq        | {term}    | {crn}`           | 24h             |
+| `desc          | {term}    | {crn}`           | 7d              |
+| `courseLink    | {subject} | {numberPattern}` | 1h              |
+| `terms`        | 24h       | `getTerms`       |                 |
+
+
+---
+
+## Eligible-course pipeline (high-level)
 
 ```
-getStudentInfo()              → student ID, school, degree
-  ↓
-getAuditData(id, school, deg) → { completed[], inProgress[], needed[] }
-  ↓ (needed = degree rules with no classes yet applied, non-wildcard)
-searchCourse(subj, num, term) → sections[] (Banner search, cached 1h)
-  ↓
-checkPrereqs(crn, term, ...)  → { met: bool, missing: string[] }
-  ↓
-getCourseDescription(crn, term) → string (cached 7d)
-  ↓
+getStudentInfo                      → { id, school, degree }
+getAuditData                        → { completed, inProgress, needed, graph, wildcards }
+                                      (RequirementGraph, per D17 / D18)
+        │
+        ▼
+BPReq.expandAuditWildcards          → needed[] ⋃ wildcard-expanded courses
+    via fetchCourseLinkFromDW         (Bug 4 Layers B + C; `except` subtracted)
+        │
+        ▼
+searchCoursesBySubjects             → Map<subject, sections[]>
+                                      (1 paginated Banner call per distinct
+                                       subject, single session handshake)
+        │
+        ▼
+index by "subject|courseNumber"     → attach sections to each needed[] entry
+        │
+        ▼
+BPPerf.mapPool (concurrency ≤ 6)    → for each course-with-sections:
+                                       checkPrereqs + getCourseDescription
+                                       via BPPerf.fetchWithTimeout (15s)
+        │
+        ▼
 eligible[] | blocked[] | notOffered[]
+        │
+        ▼
+sendUpdate({ type: "done" })        → tab.js renders, solver consumes
 ```
 
-### Working schedule (tab.js)
-
-`workingCourses` — array of course entries on the calendar.  
-`lockedCrns` — Set of CRN strings that are pinned.
-
-Mutation functions (always call `renderCalendarFromWorkingCourses` after):
-- `addToWorkingSchedule(entry)` — replaces by CRN, transfers lock if same course
-- `removeFromWorkingSchedule(crn)` — removes + unlocks
-- `toggleLock(crn)` — flips lock state
-
 ---
 
-## Known limitations
+## AI pipeline (`scheduleGenerator.js`)
 
-### Elective pools are invisible
-
-DegreeWorks represents "CS Advanced Electives" and "Minor in Music" as
-wildcard rules (`course.number === "@"`). These are filtered out of
-`needed` because Banner can't search for `@`. Fix: scrape the TXST
-course catalog for each elective pool once per catalog year and expand
-wildcards against that list before running `searchCourse`.
-
-### Prereq grade index alignment
-
-`checkPrereqGroup` aligns `gradeMatches[i]` to `prereqMatches[i]` by
-position in the HTML text. If a prerequisite has no explicit minimum
-grade, subsequent grades shift by one position. Mitigation: Banner
-almost always emits one grade line per prereq; this is a theoretical
-bug in practice but worth a proper fix if prereq checks start failing.
-
-### classesAppliedToRule skips partially-done pools
-
-`findNeeded` skips an entire requirement rule if any class has already
-been applied to it. For pool requirements that need N courses (e.g.,
-"3 of 9 credits done"), once 1 course is applied the remaining needed
-courses disappear from the list. Would need to check against
-`percentComplete` rather than presence of any applied class.
-
----
-
-## Branch + deploy workflow
-
-- **main** — stable, deployed to the Chrome Web Store (eventually)
-- **Demo** — demo-ready branch used for showing to external people
-- **feature branches** — `git checkout -b my-feature Demo`
-
-Active development happens in a Claude Code worktree at
-`.claude/worktrees/<name>/`. After commits land there, cherry-pick to
-Demo and push:
-
-```bash
-git cherry-pick <sha>            # from Demo branch
-git push origin Demo
-```
-
-Merge Demo → main via PR when a milestone is stable.
-
----
-
-## Files NOT to touch carelessly
-
-| File | Risk |
-|---|---|
-| `background.js` — `withSessionLock` / `sessionQueue` | Removing or bypassing this causes cross-term race conditions that are hard to reproduce and silent |
-| `background.js` — `runAnalysis` `bail()` checks | Removing any of the `if (bail()) return` guards causes stale analyses to mutate UI after term switch |
-| `background.js` — `getAuditData` `findNeeded` | Logic that decides what courses to surface; test with real audit data before changing |
-| `tab.js` — `addToWorkingSchedule` | Replaces by CRN AND transfers lock — keep both behaviors together |
+See `HANDOFF.md` § "Architecture (v3 hybrid)" for the full 5-stage
+diagram: Intent LLM → deterministic calibrator → Affinity LLM →
+CSP solver (`solveMulti`) → ranker (`pickTop3`) → Rationale LLM. The
+calibrator corrects LLM weight miscalibration ("preferably" → 0.7 cap,
+"cannot" → 1.0 floor). Feature flags fully removed per D17; rollback
+is `git revert`.
 
 ---
 
 ## External APIs
 
-| API | Base URL | Auth | Notes |
-|---|---|---|---|
-| DegreeWorks | `dw-prod.ec.txstate.edu/responsiveDashboard/api` | Session cookie | Requires TXST SSO login |
-| Banner registration | `reg-prod.ec.txstate.edu/StudentRegistrationSsb/ssb` | Session cookie | Stateful — use session mutex |
-| AI (n8n webhook) | `ml3392.app.n8n.cloud` | None (webhook secret in n8n) | Routes to OpenAI |
-| RateMyProfessor | GraphQL via facultyScraper.js | None | Public GraphQL API |
 
-All TXST APIs require the user to be logged in to the TXST portal.
-The extension detects auth failure and prompts an Import/login flow.
+| API                 | Base URL                                             | Auth           | Notes                                             |
+| ------------------- | ---------------------------------------------------- | -------------- | ------------------------------------------------- |
+| DegreeWorks         | `dw-prod.ec.txstate.edu/responsiveDashboard/api`     | Session cookie | Student audit + `course-link` wildcard expansion. |
+| Banner registration | `reg-prod.ec.txstate.edu/StudentRegistrationSsb/ssb` | Session cookie | Stateful — session mutex required.                |
+| AI (n8n webhook)    | `ml3392.app.n8n.cloud`                               | Webhook secret | Routes to OpenAI.                                 |
+| RateMyProfessor     | GraphQL via `facultyScraper.js`                      | None           | Public.                                           |
+
+
+All TXST APIs require an active SSO session. The extension detects auth
+failure and opens a **login popup** from `extension/background.js`
+(`openLoginPopup`). **Do not** seed that popup with
+`/ssb/registration/registration` alone — Banner often serves the anonymous
+**“What would you like to do?”** hub without hitting the IdP. The shipped entry
+and recovery URL is **`StudentRegistrationSsb/saml/login`** (SP-initiated
+SAML); see `docs/decisions.md` **D19** and `docs/bug8-banner-half-auth-login-popup-diagnosis.md`.
 
 ---
 
 ## Common tasks
 
 **Add a new Banner endpoint:**
-1. Wrap in `withSessionLock` if it calls `term/search` first
-2. Add caching if the response is reusable (use `cacheGet`/`cacheSet`)
-3. Handle `if (bail()) return` if it's called inside `runAnalysis`
 
-**Add a new UI panel section:**
-1. Add HTML to `tab.html`
-2. Add CSS to `tab.css` (use CSS custom properties, not hard-coded colors)
-3. Wire up in `tab.js` — keep render functions pure (no side effects other
-   than DOM mutation)
+- Wrap in `withSessionLock` if it touches `term/search` first.
+- Use `self.BPPerf.fetchWithTimeout`, not bare `fetch`.
+- Use `cacheGet` / `cacheSet` — pick or add a row in the cache table above.
+- Handle `if (bail()) return` if called inside `runAnalysis`.
+- If per-CRN, fan it into the existing `mapPool` lane alongside prereqs/descriptions.
 
 **Change what courses appear as eligible:**
-- Edit `findNeeded` in `background.js` — this is the source of truth
-- Test by loading the extension on your TXST account and checking the
-  Build panel against your actual DegreeWorks audit
 
-**Add a new chip color:**
-- Edit `courseColors.js` and add a `chip-N` class to `tab.css`
-- Colors should be legible on the white calendar background at 10% opacity
+- Source of truth is `BPReq.deriveEligible` in `requirements/txstFromAudit.js`. **Not `findNeeded`** (fallback only).
+- Wildcard expansion is `BPReq.expandAuditWildcards`. Test against `tests/fixtures/wildcard/cs-4@.json`.
+
+**Add a UI panel section:**
+
+- HTML → `tab.html`, CSS → `tab.css` (CSS custom properties only), wire in `tab.js`.
+- Keep render functions pure (no side effects other than DOM mutation).
+
+**Add a chip color:** `courseColors.js` + add a `chip-N` class in `tab.css`.
+
+---
+
+## Tests
+
+- `node tests/unit/run.js` — deterministic unit suite (115+ cases, no OpenAI). Must stay green on every change.
+- `OPENAI_API_KEY=... node tests/intent-fixture.js` — property tests on 11 canonical prompts. Not required per-change.
+
+---
+
+## Documentation rules (humans + AI)
+
+**Where new docs go (pick the existing bucket; making a new one requires a reviewer):**
+
+- **Architectural decision** → append to `docs/decisions.md` with date + "reversible by" clause. **Never start a new file for a decision.**
+- **Bug diagnosis** → new `docs/bugN-{short-name}-diagnosis.md`. Mark "closed" in the status header when the fix ships. Keep as historical record.
+- **Phase / feature RFC** → `docs/{name}-rfc.md`.
+- **Module-level "why"** → top-of-file comment in the module. Do not create a standalone doc for per-file context (see `wildcardExpansion.js` / `concurrencyPool.js` for the template).
+- **Any other markdown at `docs/` or repo root** → requires human review.
+
+**Rules:**
+
+1. **AI drafts, humans ratify.** If you commit a doc, you've read it line-by-line and can defend every claim. No unread AI output in the docs tree.
+2. **Docs describe *why* + *what would change this decision*.** Not what the code does — the code does that. Paraphrases of code go stale the moment the code changes and waste tokens on every future AI turn.
+3. **No end-of-task narrative docs.** Commit messages exist. If something is worth a postmortem, it's a decision (→ `decisions.md`) or a bug (→ diagnosis doc).
+4. **Every new doc must be linked from this file's § File map or from `docs/README.md`.** Unindexed = dead.
+
+---
+
+## Session hygiene (for AI sessions)
+
+**Mandatory:** If any trigger below fires during your turn, say so
+explicitly. Do not wait to be asked. API budget is finite —
+~$20/month, and this project has already eaten meaningful chunks of it.
+
+### Recommend **Auto mode** (cheap models) when the task is:
+
+- Implementing against a diagnosis doc that already exists.
+- Adding a test in an existing suite.
+- Wiring a function whose signature is already specified.
+- UI copy / styling / button-handler changes.
+- Doc-only edits.
+- Any git commit / push / PR task.
+
+### Stay on **premium (Opus / API)** when the task involves:
+
+- Design with multiple valid approaches or real trade-offs.
+- Algorithm work (solver, scorer, planner math, archetype design).
+- Debugging without a written diagnosis yet.
+- LLM prompt engineering.
+- First-time implementation of a new phase.
+
+### Recommend a **new chat window** when any of:
+
+- This chat has had more than ~20 substantive turns OR you've read more than ~10 distinct files.
+- You're about to switch phases or feature areas.
+- A logical unit just wrapped AND HANDOFF.md was updated with the new state.
+- You notice yourself re-reading files you already read this conversation.
+- Rough self-check says this chat has consumed more than ~8% of the monthly API quota.
+
+When recommending a new chat, **give the next contributor a paste-ready
+opener**, including `cd` into the repo root and the specific `HANDOFF.md`
+section + diagnosis docs the next session should read.
+
+**Repo root is the directory containing this file.** The older
+`.claude/worktrees/` workflow is deprecated as of 2026-04-21 — do not route
+new sessions into a worktree path.
+
+### Do NOT switch mid-flow when:
+
+- Mid-implementation of something complex with live state in the conversation.
+- Re-onboarding a fresh session would cost more turns than finishing.
+- A contributor is in flow and a context switch would break their thinking — lead with the work, mention the switch at the end.
+
+### Honesty clause
+
+If you don't know how much budget has been used, say so — don't guess.
+
+### Mandatory "Next steps" block on every response
+
+Every turn must end with a short `### Next steps` block, containing in order:
+
+1. **Do now (you):** one concrete action in the browser / terminal / this chat.
+2. **Next chat opener:** paste-ready, including `cd` into the repo root and which docs to read. Marked Auto or Opus/API per the routing rules. If the current chat should continue instead, say so explicitly.
+3. **Branch point:** if the next action depends on the outcome of step 1, name the branches (`if X → chat A, if Y → chat B`).
+
+Keep it ≤ 8 lines total. It is the receipt the next contributor takes to the next chat, not a report.
+
+---
+
+## Branch + deploy workflow
+
+- `main` — stable, eventually deployed to Chrome Web Store.
+- `Demo` — demo-ready branch for external demos.
+- `LLM-algorithm` — active AI scheduler work.
+- Feature branches: `git checkout -b my-feature` from whichever base applies.
+
+Milestones merge via PR. Per D17, commit-scoped rollback is the default; feature flags only when a phase needs shadow-mode or multi-commit bisection, and flags are stripped once the phase lands.
+
+---
+
+## Files NOT to touch carelessly
+
+
+| File / area                                                          | Risk                                                                                                                       |
+| -------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| `background.js` — `withSessionLock` / `sessionQueue`                 | Bypassing causes cross-term Banner race conditions. Silent, hard to reproduce.                                             |
+| `background.js` — `runAnalysis` `bail()` checks                      | Removing any `if (bail()) return` lets stale analyses mutate UI after term switch.                                         |
+| `background.js` — prereq / description `mapPool` block               | Reverting to `Promise.all` + raw `fetch` reintroduces the 4-minute prereq hang (A1 fix).                                   |
+| `background.js` — `searchCoursesBySubjects` cache key version (`v2`) | Bump if caching semantics change. Do not silently mutate cached shape under an existing key.                               |
+| `background.js` — inline `BPPerf.`* fallbacks                        | If `performance/concurrencyPool.js` ever fails to load, these keep guardrails on. Do not weaken to the pre-A1 naive shape. |
+| `tab.js` — `addToWorkingSchedule`                                    | Replaces by CRN AND transfers lock. Keep both behaviors together.                                                          |
+| `scheduleGenerator.js` — affinity cache wipe in `handleUserTurn`     | Without it, prior-turn career keywords silently bias this turn.                                                            |
+| `scheduleGenerator.js` — Jaccard tiered dedup in `pickTop3`          | Don't simplify to section-signature-only dedup; regresses "same courses, different lab".                                   |
+| `scheduleGenerator.js` — `validateSchedule`                          | Defense in depth. If it fires, the solver is wrong — fix the solver.                                                       |
+
+

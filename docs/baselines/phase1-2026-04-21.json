@@ -1,0 +1,42 @@
+{
+  "snapshotDate": "2026-04-21",
+  "phase": "1",
+  "notes": "Offline-measurable Phase 1 baseline captured immediately after wiring the RequirementGraph parser into `background.js` behind `bp_phase1_wiring` (flag OFF by default). Phase 2 will extend this baseline with runtime metrics (honoredRate, archetypeDistance, penaltyEffectiveness) that require an LLM and the full intent-fixture prompts. Regenerate via `node scripts/generate-phase1-baseline.js`.",
+  "audits": [
+    {
+      "file": "audit-english-ba.json",
+      "graphRoots": 7,
+      "graphValidity": { "valid": true, "issues": 0 },
+      "derivedEntries": 160,
+      "derivedHideFromUi": 31,
+      "derivedWildcards": 8,
+      "uniqueWildcards": 5
+    },
+    {
+      "file": "audit-computerscience-bs-minor-music.json",
+      "graphRoots": 5,
+      "graphValidity": { "valid": true, "issues": 0 },
+      "derivedEntries": 27,
+      "derivedHideFromUi": 2,
+      "derivedWildcards": 14,
+      "uniqueWildcards": 12
+    }
+  ],
+  "wildcards": [
+    {
+      "file": "cs-4@.json",
+      "coursesTotal": 31,
+      "coursesOfferedFall2026": 8,
+      "sectionsTotal": 40,
+      "sectionsFall2026": 11
+    }
+  ],
+  "tests": {
+    "command": "node tests/unit/run.js",
+    "passed": 76,
+    "failed": 0,
+    "knownFailures": 1,
+    "knownFailureNote": "Phase 2 preferInPerson scorer gap — deliberate, documented in scoring.test.js",
+    "surprises": 0
+  }
+}

@@ -1,5 +1,10 @@
 const $ = (id) => document.getElementById(id);
 
+const EMPTY_REG_RECOVER_KEY = "bpRegEmptyRecover:";
+
+/** "plan" = open scheduler tab; "login" = open tab and run SAML there (never auto-open SAML from this popup). */
+let planBtnMode = "plan";
+
 // Load student info
 chrome.runtime.sendMessage({ action: "getStudentInfo" }, (student) => {
   if (student) {
@@ -20,12 +25,15 @@ chrome.runtime.sendMessage({ action: "getTerms" }, (terms) => {
   if (!terms || terms.length === 0) return;
   const select = $("termSelect");
 
-  // Find current term: most recent non-View Only term whose start date has passed
+  // Find current term: most recent non-View Only, non-Correspondence term whose start date has passed
   const now = new Date();
   let currentIdx = 0;
   for (let i = 0; i < terms.length; i++) {
+    const desc = String(terms[i].description || "");
+    if (/\(view only\)/i.test(desc)) continue;
+    if (/correspondence/i.test(desc)) continue;
     // Extract start date from description like "Spring 2026 20-JAN-2026 - 13-MAY-2026"
-    const dateMatch = terms[i].description.match(/(\d{2}-[A-Z]{3}-\d{4})/);
+    const dateMatch = desc.match(/(\d{2}-[A-Z]{3}-\d{4})/);
     if (dateMatch) {
       const startDate = new Date(dateMatch[1]);
       if (startDate <= now) {
@@ -50,16 +58,42 @@ $("termSelect").addEventListener("change", (e) => {
   loadSchedule(e.target.value);
 });
 
+function popupEmptyScheduleHtml() {
+  const desc =
+    $("termSelect")?.selectedOptions?.[0]?.textContent || "";
+  if (/\(view only\)/i.test(desc)) {
+    return (
+      '<div class="no-schedule">No Banner meetings for this View Only term — pick it in TXST registration first, then open the planner.</div>'
+    );
+  }
+  return (
+    '<div class="no-schedule">No Banner meetings for this term (registration may be closed). Try Summer/Fall or open the full planner.</div>'
+  );
+}
+
 function loadSchedule(term) {
+  planBtnMode = "plan";
   $("miniCalendar").innerHTML =
     '<div class="no-schedule">Loading schedule...</div>';
   chrome.runtime.sendMessage({ action: "getSchedule", term: term }, (data) => {
-    if (!data || data.length === 0) {
+    if (data === null) {
+      planBtnMode = "login";
       $("miniCalendar").innerHTML =
-        '<div class="no-schedule">No registered courses for this term</div>';
-      $("planBtn").textContent = "Plan This Semester";
+        '<div class="no-schedule">Could not load registration — open the planner tab and tap Login.</div>';
+      $("planBtn").textContent = "Login";
       return;
     }
+
+    if (!Array.isArray(data) || data.length === 0) {
+      planBtnMode = "login";
+      $("miniCalendar").innerHTML = popupEmptyScheduleHtml();
+      $("planBtn").textContent = "Login";
+      return;
+    }
+    try {
+      sessionStorage.removeItem(EMPTY_REG_RECOVER_KEY + term);
+    } catch (_) {}
+    planBtnMode = "plan";
     renderMiniCalendar(data);
     $("planBtn").textContent = "Plan Semester";
   });
@@ -133,8 +167,9 @@ function formatTime12(t) {
   return h + ":" + m + ampm;
 }
 
-// Open full tab
+// Open full tab (or tab + SAML when schedule did not load)
 $("planBtn").addEventListener("click", () => {
-  chrome.runtime.sendMessage({ action: "openFullTab" });
+  const openLogin = planBtnMode === "login";
+  chrome.runtime.sendMessage({ action: "openFullTab", openLogin });
   window.close();
 });
