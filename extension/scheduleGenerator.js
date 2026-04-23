@@ -511,8 +511,8 @@ Existing avoid days: ${JSON.stringify(studentProfile.avoidDays)}${ragSection}
   const HEDGE_PATTERN = /\b(preferably|ideally|if possible|hopefully|rather|somewhat|maybe|kinda|kind of|sort of|would like|would prefer|i'd like|i would like|open to|flexible)\b/;
   const HARD_PATTERN = /\b(cannot|can't|can not|impossible|won't|will not|never|absolutely no|absolutely not|under no circumstances|must not|no way|refuse|have to avoid|need to avoid|no classes at all)\b/;
   // Declarative-no: plain "no X" where X is a scheduling noun the student only
-  // uses when stating a rule. Live-trace evidence (docs/bug1-morning-preference-
-  // diagnosis.md) showed the intent LLM returns 0.6 for "no classes before noon"
+  // uses when stating a rule. Live-trace evidence (docs/postmortems/
+  // bug1-morning-preference.md) showed the intent LLM returns 0.6 for "no classes before noon"
   // and HARD_PATTERN didn't rescue it, so the weight-1.0 → hard-constraint
   // promotion in buildConstraints never fired in production.
   // Scoped narrowly to avoid false positives like "no problem", "no clue",
@@ -708,7 +708,7 @@ ${JSON.stringify(compressed, null, 2)}
   const SOLVER_RESULT_CAP = 2000;
 
   // Preference-distance for section ordering (pref-biased solve pass). Mirrors
-  // docs/bug1-morning-preference-diagnosis.md — lower is better.
+  // docs/postmortems/bug1-morning-preference.md — lower is better.
   function preferenceSectionDistance(section, prefs) {
     if (!prefs) return 0;
     const wM = prefs.morningCutoffWeight ?? 0.5;
@@ -1335,7 +1335,7 @@ ${JSON.stringify(compressed, null, 2)}
   // Ordering choices (D14):
   //   - pref-distance RUNS FIRST, so the initial schedules in the pool honor
   //     the student's soft prefs even when no pref is hard-floored. Live
-  //     trace in docs/bug1-morning-preference-diagnosis.md showed MRV-first
+  //     trace in docs/postmortems/bug1-morning-preference.md showed MRV-first
   //     filled the 2000-schedule cap along a branch that never reached the
   //     12:30 PM alternative to CS 4371.
   //   - Each pass gets a per-pass budget (SOLVER_RESULT_CAP / passes) so no

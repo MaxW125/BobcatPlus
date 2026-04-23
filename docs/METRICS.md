@@ -127,7 +127,7 @@ Does this schedule respect the degree's structural rules?
 **Inputs:**
 
 - `schedule.courses[]` with `{subject, courseNumber}`.
-- `graph: RequirementGraph` (see `requirement-graph-rfc.md`).
+- `graph: RequirementGraph` (see `plans/requirement-graph.md`).
 
 **Formula (binary per schedule):**
 

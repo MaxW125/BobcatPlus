@@ -1,8 +1,9 @@
 # Contributing — docs rules
 
 Four rules. Read once, follow always. These apply to humans *and* to AI
-sessions drafting doc changes. The longer version of "why" lives in
-`../CLAUDE.md` § Documentation rules.
+sessions drafting doc changes. The short rules live in `../CLAUDE.md`
+under **Documentation rules (short)**; the process rationale lives in
+[`process.md`](process.md).
 
 ---
 
@@ -42,11 +43,12 @@ Commit messages exist. A change that ships does not also need a
 "here's what I did" markdown file. If something is worth
 preserving:
 
-- A locked-in decision → append to `decisions.md`.
-- A bug with a non-obvious failure mode → new
- `bugN-{short-name}-diagnosis.md`, mark "closed" when fixed, keep as
-historical record.
-- A phase / feature design → `{name}-rfc.md`.
+- A locked-in **architecture / product decision** → append to `decisions.md`.
+- A **process / workflow meta-decision** → `process.md`.
+- A **bug with a non-obvious failure mode** → new `bugs/bugN-{short-name}.md`.
+  When fixed, `git mv` it to `postmortems/` and mark `Status: ✅ Closed`.
+- A **phase / feature design** → `plans/{name}.md`.
+- Live bug **triage** (status, priority, assignee) → Jira, not a doc.
 
 Anything else that doesn't fit these buckets should probably be a
 commit message, a code comment, or a Slack / chat message — not a new
@@ -55,10 +57,11 @@ doc.
 ## 4. Every new doc must be linked from `README.md` or `CLAUDE.md`
 
 Unindexed docs are dead docs. When you create a new doc, update
-`docs/README.md` (or `../CLAUDE.md` § File map, if it's describing
-extension runtime code) in the same commit. If it doesn't appear in
-one of those two indices, it gets GC'd the next time someone cleans up
-stale docs, and no one will notice.
+`docs/README.md` and/or the “Where to read next” table in `../CLAUDE.md`
+in the same commit. If it doesn't appear in one of those two indices, it
+gets lost on the next cleanup. **Core reference** docs for the extension
+(`architecture`, `invariants`, `file-map`, `open-bugs`) are indexed in
+`README.md` under “Core reference”.
 
 ---
 
@@ -67,8 +70,9 @@ stale docs, and no one will notice.
 
 | You want to write…                            | It goes in…                                                                                                                          |
 | --------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| An architectural decision                     | Append to `[decisions.md](decisions.md)`. **Never start a new file for a decision.**                                                 |
-| A bug postmortem + fix plan                   | New `bugN-{short-name}-diagnosis.md`. Mark `Status: ✅ Closed` or `🟡 Deferred` in the header.                                        |
-| A phase / feature RFC                         | New `{name}-rfc.md`.                                                                                                                 |
+| An architectural / product decision           | Append to [`decisions.md`](decisions.md). **Never start a new file for a decision.**                                                 |
+| A process / workflow meta-decision            | Append to [`process.md`](process.md).                                                                                                |
+| An open bug diagnosis                         | New `bugs/bugN-{short-name}.md`. When closed, `git mv` to `postmortems/`.                                                            |
+| A phase / feature design                      | New `plans/{name}.md`.                                                                                                               |
 | Per-module "why this code is shaped this way" | Top-of-file comment in the module itself — not a standalone doc. See `extension/requirements/wildcardExpansion.js` for the template. |
 | Anything else                                 | Ask for review before creating it. No exceptions.                                                                                    |

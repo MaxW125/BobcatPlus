@@ -181,7 +181,7 @@ cases.push({
 cases.push({
   name: "solveMulti: first schedule honors soft prefs via pref-distance ordering (D14)",
   run() {
-    // Regression target: docs/bug1-morning-preference-diagnosis.md.
+    // Regression target: docs/postmortems/bug1-morning-preference.md.
     // When `morningCutoffWeight` is below 1.0 (so weight-1.0 → hard promotion
     // can't prune), pref-distance ordering alone must still surface a
     // preference-honoring schedule early enough to reach the ranker. In the

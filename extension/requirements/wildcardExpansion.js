@@ -184,7 +184,7 @@
   // `with` clause) are skipped for now — the bug4 diagnosis doc defers
   // them to Layer D; the hideFromAdvice concrete siblings that
   // RequirementGraph already surfaces typically cover that case in
-  // practice. See docs/bug4-eligible-diagnosis.md.
+  // practice. See docs/bugs/bug4-eligible.md.
   async function expandAuditWildcards(input, options) {
     const safeInput = input || {};
     const wildcards = Array.isArray(safeInput.wildcards)

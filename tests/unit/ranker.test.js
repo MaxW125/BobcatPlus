@@ -117,4 +117,80 @@ cases.push({
   },
 });
 
+cases.push({
+  name: "pickTop3: Pass-1 Jaccard<=0.7 prefers a different course-set over same-courses/different-sections",
+  run() {
+    // Regression target: commit 62722e2 ("add Jaccard<1.0 fallback tier").
+    //
+    // Scenario: solver emits 3 feasible results.
+    //   r1 = {A,B,C} at morning sections — highest affinity score
+    //   r2 = {A,B,C} at afternoon sections — same course set, different CRNs
+    //   r3 = {A,B,D} — ONE course swapped; Jaccard(r3,r1) = 2/4 = 0.5
+    //
+    // Correct behavior: top[] should include r3's course set {A,B,D} in at
+    // least one pick, because Pass 1 of pickFrom requires Jaccard<=0.7 vs
+    // already-taken picks. If Pass 1's filter were removed (or weakened back
+    // to section-signature-only dedup), r2 would outrank r3 on any vector
+    // where it scored higher, and the top picks would be "same courses, just
+    // different lab times" — which is the exact bug 62722e2 fixed.
+    //
+    // We construct results hand-wise (not via the solver) so the assertion
+    // is pinned to the ranker's dedup contract, independent of solver state.
+    const mk = (courseName, crn, days, start, end) => ({
+      courseObj: synth.course({ name: courseName }),
+      section: synth.section({ crn, days, start, end }),
+    });
+
+    const r1 = {
+      picks: [
+        mk("CS 3339", "R1-A", synth.MWF, "0800", "0915"),
+        mk("MATH 2471", "R1-B", synth.TR, "0800", "0915"),
+        mk("ENG 1310", "R1-C", synth.MWF, "1000", "1115"),
+      ],
+      credits: 9,
+    };
+    const r2 = {
+      picks: [
+        mk("CS 3339", "R2-A", synth.MWF, "1400", "1515"),
+        mk("MATH 2471", "R2-B", synth.TR, "1400", "1515"),
+        mk("ENG 1310", "R2-C", synth.MWF, "1600", "1715"),
+      ],
+      credits: 9,
+    };
+    const r3 = {
+      picks: [
+        mk("CS 3339", "R3-A", synth.MWF, "1000", "1115"),
+        mk("MATH 2471", "R3-B", synth.TR, "1000", "1115"),
+        mk("HIST 1310", "R3-D", synth.MWF, "1200", "1315"),
+      ],
+      credits: 9,
+    };
+
+    const top = BP.pickTop3([r1, r2, r3], synth.defaultPreferences(), {});
+    assertTrue(top.length >= 2, `expected ≥2 top picks, got ${top.length}`);
+
+    // The regression canary: HIST 1310 appears in the top when a Jaccard-0.5
+    // alternative exists. If the dedup filter ever regressed, the top would
+    // contain r1 + r2 (both {CS,MATH,ENG}) and HIST would be invisible.
+    const hasHist = top.some((t) =>
+      t.result.picks.some((p) => p.courseObj.course === "HIST 1310"),
+    );
+    assertTrue(
+      hasHist,
+      "Pass 1 Jaccard<=0.7 filter should surface the {A,B,D} alternative " +
+        "instead of stacking two copies of {A,B,C}",
+    );
+
+    // Second-tier assertion: the set of course-sets in top is >1. Without
+    // the filter, top would be [{A,B,C},{A,B,C},…] — one unique set.
+    const courseSetKey = (t) =>
+      [...new Set(t.result.picks.map((p) => p.courseObj.course))].sort().join(",");
+    const uniqueCourseSets = new Set(top.map(courseSetKey));
+    assertTrue(
+      uniqueCourseSets.size >= 2,
+      `top should expose ≥2 distinct course-sets when alternatives exist, got ${uniqueCourseSets.size}`,
+    );
+  },
+});
+
 module.exports = { cases };

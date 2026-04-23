@@ -1,6 +1,6 @@
 // calibrateIntentWeights + buildConstraints end-to-end tests.
 //
-// Regression target: docs/bug1-morning-preference-diagnosis.md (Bug 1).
+// Regression target: docs/postmortems/bug1-morning-preference.md (Bug 1).
 // The original 79-test suite tested `hardNoEarlierThan` at the solver leaf but
 // never threaded a declarative user message through the full intent →
 // calibrator → buildConstraints chain. That gap let the weight-1.0 → hard-

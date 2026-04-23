@@ -13,7 +13,7 @@ to do?”** landing — browse / catalog / plan — instead of redirecting to
 registration, so the extension assumed progress and verification could spin
 until timeouts.
 
-Session cookie clearing via **`fetch`** to `/saml/logout?local=true` alone
+Session cookie clearing via `**fetch`** to `/saml/logout?local=true` alone
 did not reliably replace that state when the popup first loaded
 `/ssb/…/registration/registration`.
 

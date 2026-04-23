@@ -2,7 +2,7 @@
 //
 // Tiny runtime-agnostic helpers that guardrail network-heavy phases so the
 // extension never deadlocks on a single stalled socket (see
-// docs/bug4-eligible-diagnosis.md for the 4-minute-hang repro that motivated
+// docs/bugs/bug4-eligible.md for the 4-minute-hang repro that motivated
 // this module).
 //
 // Exports (attached to global.BPPerf and to module.exports):

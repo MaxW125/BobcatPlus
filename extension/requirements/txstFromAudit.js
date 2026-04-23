@@ -3,7 +3,7 @@
 // This is the *only* place that knows the shape of a TXST DegreeWorks audit.
 // It consumes the raw JSON returned by
 // `dw-prod.ec.txstate.edu/responsiveDashboard/api/audit` and returns a
-// `RequirementGraph` as defined in `docs/requirement-graph-rfc.md`.
+// `RequirementGraph` as defined in `docs/plans/requirement-graph.md`.
 //
 // Scope boundary — things that DO NOT belong in this file:
 //   • any fetch/network call (that lives in `background.js`)

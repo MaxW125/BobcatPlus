@@ -32,9 +32,9 @@ This is the "everything just loads" UX.
 ## Investigation TODO (when we pick this up)
 
 - Read `extension/background.js` login / SAML / session-expired paths.
-  Popup entry URL is **`/saml/login`** per **D19** (see `docs/decisions.md`);
-  Bug 8 diagnosis for the half-auth hub regression is
-  `docs/bug8-banner-half-auth-login-popup-diagnosis.md`.
+Popup entry URL is `**/saml/login`** per **D19** (see `docs/decisions.md`);
+Bug 8 diagnosis for the half-auth hub regression is
+`docs/postmortems/bug8-banner-half-auth-login-popup.md`.
 - Decide whether the "no auth" banner lives in the popup, the tab view,
  or both. The tab is where the full scheduler UI lives, but the popup
 is the fastest place to catch the signal.

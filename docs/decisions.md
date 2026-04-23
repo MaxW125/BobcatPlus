@@ -1,14 +1,293 @@
 # Decisions — Bobcat Plus AI Scheduler
 
-A running, dated log of the architectural and product decisions that shape the
-scheduler. Each entry is an ADR-lite record: *context → decision → rationale →
-who can reverse it*. New entries go at the **top**. Do not rewrite history —
-add a new entry that supersedes the old one if we change our minds.
+A running, dated log of the **architectural and product** decisions that shape
+the scheduler. Each entry is an ADR-lite record: *context → decision →
+rationale → who can reverse it*. New entries go at the **top**. Do not rewrite
+history — add a new entry that supersedes the old one if we change our minds.
 
-This file is the single source of truth for "what did we agree on?". The RFCs
-and the HANDOFF describe *how* we build things; this file captures *what we
-chose and why*. If a decision here ever contradicts an RFC, the newer date
-wins and the RFC must be updated.
+This file is the single source of truth for "what did we agree on?" about
+**system shape**. Process and workflow meta-decisions (how we plan, what
+gates we run, which model to use, when to start a new chat) live in
+`[process.md](process.md)` — they were extracted in the 2026-04-23
+restructure so this log stays architectural. If a decision here contradicts a
+plan/RFC in `docs/plans/`, the newer date wins and the plan must be updated.
+
+---
+
+## 2026-04-23 — D24: Refactor-branch follow-ups `a2583f6` and `832a155` closed without port
+
+**Context.** The legacy `Refactor` branch (pre–`main` merge) had additional commits
+after the module split. During `refactor-on-main` we explicitly **did not**
+cherry-pick some of them because `main` already contains equivalent or strictly
+better behavior.
+
+**Decision.**
+
+1. `**a2583f6` (10s `AbortController` on prereq fetch):** **Superseded** by
+  `**e687ad6`** and the D20 path — all per-CRN work goes through
+   `self.BPPerf.fetchWithTimeout` (12–15s) inside `self.BPPerf.mapPool` in
+   `bg/prereqs.js` + `bg/analysis.js`. No separate timer layer is required.
+2. `**832a155` (import popup "logged in" fix):** **Superseded** by **D19** and
+  the merged registration/login flow — SP-initiated SAML at `/saml/login`, popup
+  - `openLoginPopup` in `bg/registration.js` handle the half-auth class of bugs
+   differently than the old patch.
+
+**Rationale.** Prevents double-fix debt and documents why those commits do not
+appear as separate SHAs on `refactor-on-main`.
+
+**Reversible by.** N/A (informational close-out). If we ever revert `e687ad6` or
+D19, reassess the old Refactor diffs in isolation.
+
+**See also.** `docs/postmortems/refactor-on-main-split.md` (deferred from
+the old `Refactor` branch); `docs/open-bugs.md` for Bug 9 / 10 pointers.
+
+---
+
+## 2026-04-23 (late) — D22: Revert D21 — popup probe stays Banner-only; fix SAML form parser entity decode instead
+
+**Context.** D21 shipped as an uncommitted patch on `refactor-on-main`;
+user smoke testing failed. HAR from the failing run
+(`bugged-login.har`) showed two independent issues that D21 got
+wrong:
+
+1. **DW `/api/students/myself` is API-aware.** It returns `401` directly
+  with no redirect to SAML (11 hits in the HAR, all `401`, zero
+   `Location:` headers). A silent SW fetch cannot warm DW's SP cookie
+   because there is no SAML chain for `resolveRegistrationHtmlToJsonSw`
+   to follow. D21's `probeDegreeWorksReady` is architecturally
+   impossible on that endpoint.
+2. **Death spiral when DW probe fails forever.** With `probeLoginReady`
+  stuck returning `false`, the verify loop falls through to
+   `softRefreshRegistrationTab`, which calls `/saml/logout?local=true`
+   and nukes the Banner session the user just completed. Banner then
+   needs re-auth, probe fails again, another `saml/logout` fires, etc.
+   Visible in the HAR as `getRegistrationEvents` 200-JSON at `08:22:04`
+   followed by `saml/logout` fires at `08:22:06`, `:09`, `:13` — the
+   exact "slowly bouncing between Banner and DW, stopped on a weird
+   Banner page" the user described.
+3. **Separate pre-existing parser bug surfaced.** 160 POSTs to
+  `/ssb/classRegistration/https&` in the HAR are caused by
+   `extractHtmlAttr` in `extension/bg/registration.js` not decoding
+   HTML entities. Banner's current `/saml/login` AuthnRequest form
+   ships with
+   `action="https://eis-prod.ec.txstate.edu:443/samlsso"`.
+   The regex captures the raw string, `new URL(rawAction, baseHref)`
+   treats it as a relative path, we POST to garbage, Banner 302s back
+   to `/saml/login`, loop. `tab.js` does not hit this because it uses
+   `DOMParser`, which decodes entities for free. This is the
+   "split-brain SW vs tab parser" Composer's earlier notes called out.
+
+**Decision.**
+
+1. Revert `probeLoginReady` + `probeDegreeWorksReady` in
+  `extension/bg/registration.js`. Restore `probeBannerRegistration`
+   (the D19-era single-channel probe).
+2. Fix `extractHtmlAttr` to HTML-entity-decode its return value before
+  handing it to `new URL(...)`. The SW's regex path now matches the
+   tab's `DOMParser` path on this axis.
+3. Accept DW half-auth after clear-cookies as a known limitation. The
+  user has a working workaround (visit DW once manually to trigger
+   DW's SAML). `tab.js` `checkAuth` still gates on both SPs, so the
+   tab correctly asks the user to re-authenticate when DW is cold.
+
+**Rationale.** D21's premise — that the SW could warm DW silently —
+was wrong. DW's API endpoint does not redirect unauthed requests; it
+401s. There is no silent path to set the DW SP cookie. The only
+silent fetches that can warm a Shibboleth SP are those that hit a URL
+which the SP itself redirects into SAML (i.e., UI endpoints, not
+API endpoints). Even that path would have been stopped by the
+pre-existing entity-decode bug in item 3 above. Fixing the real
+pre-existing loop bug is the load-bearing change; the D21 probe was
+cargo-culted architecture that caused more breakage than it fixed.
+
+**Postmortem-in-advance.** *If we hit half-auth complaints again:*
+
+1. **Preferred path:** have `openLoginPopup` navigate the popup tab
+  through the DW worksheet URL once after `probeBannerRegistration`
+   passes, and wait for the `DW_SUCCESS` URL before firing
+   `loginSuccess`. That uses the real browser (with JavaScript) to
+   execute the IdP's auto-post, which silent fetch cannot. Same
+   mechanism `restartFromDegreeWorks` already uses — we'd just wire it
+   into the happy path instead of the recovery path. Small change,
+   ~20 lines, self-contained.
+2. **Alternative:** loosen `checkAuth` in `tab.js` to require Banner
+  only and lazy-warm DW on first DW-dependent action. Rejected
+   today because DW is needed early in the planner flow (audit
+   overview, degree requirements).
+
+**Reversible by.** Revert this commit; D21's code still works for any
+future environment where DW's API is re-fronted with an SP redirect.
+
+**Landed.** `refactor-on-main`, 2026-04-23, after HAR-verified failure
+of D21. See `docs/postmortems/bug11-post-saml-degreeworks-warmup.md`
+(updated with correction notes).
+
+Item **3** ("accept DW half-auth after clear-cookies") is **superseded
+for the login-popup flow** by **D23** — users who complete SAML in the
+popup now hit DW in the same tab before `loginSuccess`.
+
+---
+
+## 2026-04-23 — D23: Happy-path login popup navigates to DegreeWorks worksheet after Banner probe
+
+**Context.** D22 treated post-clear-cookies DW coldness as acceptable
+because the user could open DegreeWorks manually once. That still left
+the planner tab on "Not logged in" after a successful Banner SAML in
+the popup — bad UX for the common "clear all cookies" dev/test flow.
+
+**Decision.** In `extension/bg/registration.js` `openLoginPopup`, after
+`probeBannerRegistration` succeeds: set `awaitingDwWorksheetAfterBanner`
+and `chrome.tabs.update` the popup tab to the DW worksheet URL (same
+as `restartFromDegreeWorks`). When `chrome.tabs.onUpdated` sees a URL
+containing `responsiveDashboard/worksheets` while that flag is set,
+call `finishLoginSuccess()` — close the popup and send `loginSuccess`.
+Do **not** redirect to Banner SAML in that case. When the flag is
+clear (recovery path after a failed Banner probe), keep the existing
+behavior: worksheet → `/saml/login?_dw=…`.
+
+If Banner probe passes again while the flag is already set (user
+navigated back to Banner SSB before the worksheet finished loading),
+re-`update` the tab to the worksheet URL.
+
+**Rationale.** DW's REST API does not initiate SAML (D22); only a real
+document navigation can complete the DW SP handshake. This reuses the
+same browser mechanism as recovery, wired into the happy path.
+
+**Reversible by.** Deleting the flag and the first-branch navigation in
+the probe success path; popup would again close on Banner-only readiness.
+
+**Landed.** `refactor-on-main`, 2026-04-23.
+
+---
+
+## 2026-04-23 — D21: Login popup gates `loginSuccess` on BOTH Banner and DegreeWorks being ready
+
+**Status (2026-04-23 late):** **Superseded by D22.** D21 never
+committed — reverted before landing after HAR evidence showed the
+premise (silent DW warm via SW fetch) was architecturally impossible.
+Kept here as a decision record; see D22 for details and the correct
+fix (entity-decode in the SAML form parser).
+
+**Context.** After D19 fixed the popup landing page (`/saml/login`), a
+second half-auth failure mode remained. The popup's verify tick only
+probed Banner registration; once Banner returned schedule data the popup
+fired `loginSuccess` and closed. But DegreeWorks is a distinct Shibboleth
+SP on `dw-prod.ec.txstate.edu`, and Banner's SAML round-trip only warms
+the Banner SP cookie jar on `reg-prod.ec.txstate.edu`. Result: popup
+closed, tab.js `checkAuth` (which requires both endpoints) immediately
+returned false, UI rendered "Not logged in" despite a successful SAML
+login a moment earlier. Reproducible on cleared cookies on both `main`
+and `refactor-on-main`. See `docs/postmortems/bug11-post-saml-degreeworks-warmup.md`.
+
+**Decision.**
+
+1. `openLoginPopup` in `extension/bg/registration.js` replaces the
+  single-channel `probeBannerRegistration(term)` with a two-channel
+   `probeLoginReady(term)` that AND-gates on:
+  - `probeBannerReady(term)` — existing fast-then-slow schedule probe,
+  unchanged.
+  - `probeDegreeWorksReady()` — new silent fetch to
+  `https://dw-prod.ec.txstate.edu/responsiveDashboard/api/students/myself`
+  with `credentials: "include"` + `redirect: "follow"`. The IdP
+  session is already warm from Banner's SAML, so DW's SP-initiated
+  SAML completes silently via the auto-post HTML chain. Reuse the
+  existing SP-agnostic `resolveRegistrationHtmlToJsonSw` to resolve
+  the chain; accept only a body that parses to
+  `{ _embedded: { students: [...] } }`.
+2. `scheduleVerify`'s tick calls `probeLoginReady` — `loginSuccess`
+  only fires once both SPs are authenticated.
+3. The two-channel probe's AND-gate intentionally matches tab.js
+  `checkAuth`'s AND-gate. If one side ever needs to change, both sides
+   change together — they are a pair.
+
+**Rationale.** The popup and the tab are describing the same concept
+("is the user signed in?") on opposite sides of the extension wire. When
+those two descriptions disagree, the user experiences a "popup closed
+successfully, but the app says I'm not logged in" failure. The fix is
+to align the two definitions. Since tab.js `checkAuth` has historically
+been the authoritative consumer — it gates every action the tab takes —
+the popup's probe moves to match it, not the other way around.
+
+Probing DW inside the popup (in the SW) rather than asking the tab to
+warm DW post-`loginSuccess` keeps session-warming ceremony in one place
+(`openLoginPopup`), and keeps the popup closed until the user actually
+has a working session to return to. The alternative — let the popup
+close early and have the tab warm DW on its own — was rejected because
+the tab is where users see the "Not logged in" message, and the bad UX
+of seeing that message flash on after a successful login was the exact
+symptom we were fixing.
+
+**Postmortem-in-advance.** *Six months from now we rolled this back.*
+
+1. **Failure mode:** DegreeWorks consolidates with Banner onto a single
+  SP so the silent warm-up is redundant. **Mitigation:** collapse
+   `probeLoginReady` back to Banner-only; delete `probeDegreeWorksReady`.
+   Zero user-visible change.
+2. **Failure mode:** A DW-side outage makes the silent probe fail
+  persistently while Banner is healthy, stranding users in the popup
+   until the 90s deadline. **Mitigation:** the popup already sends
+   `loginCancelled` on deadline, and tab.js handles that gracefully.
+   If the outage is long enough to be a real problem, loosen
+   `probeDegreeWorksReady` to gate on `r.ok` only (accept 200-HTML) as
+   a temporary degraded mode; that's one line.
+3. **Failure mode:** DW changes `/api/students/myself` envelope shape
+  and the `_embedded.students[0]` check stops matching. **Mitigation:**
+   update the shape check to match the new response; this is the same
+   fragility `getStudentInfo` already has, not a new one.
+
+**Reversible by.** Reverting the `openLoginPopup` / probe changes in
+`extension/bg/registration.js`. Symptom reproduces immediately on any
+clear-cookies login flow.
+
+**Landed.** `refactor-on-main`, 2026-04-23 (pending user browser smoke
+before commit is pushed).
+
+---
+
+## 2026-04-23 — D20: Service worker runs as an ES module; no inline `BPPerf.`* fallback
+
+**Context.** `extension/background.js` previously loaded
+`extension/performance/concurrencyPool.js` + `extension/requirements/*.js`
+via `importScripts()` inside a `try/catch`, and kept a hand-written copy
+of `BPPerf.mapPool` + `BPPerf.fetchWithTimeout` inline (~80 lines) as a
+"fallback" that would silently activate if the import failed. That copy
+could drift from the canonical implementation unnoticed, and a failed
+deploy would quietly run with the duplicate — the exact silent-
+regression mode that reintroduced the prereq hang during Bug 4.
+
+**Decision.**
+
+1. `manifest.json` → `"background": { "type": "module" }`.
+2. `background.js` replaces `importScripts(...)` with static ES
+  side-effect imports of the same four modules
+   (`requirements/graph.js`, `txstFromAudit.js`, `wildcardExpansion.js`,
+   `performance/concurrencyPool.js`).
+3. The inline `BPPerf.*` fallback block is **deleted**.
+4. Post-import assertions throw loudly if `self.BPReq.buildGraphFromAudit`
+  / `self.BPPerf.mapPool` / `self.BPPerf.fetchWithTimeout` are not
+   populated after the imports. The service worker refuses to start
+   rather than run in a partial-load state.
+
+**Rationale.** ES-module static imports are all-or-nothing — if any
+module can't be resolved or parsed, the SW fails to start at a visible
+point (`chrome://extensions` shows the error). That's a stronger contract
+than silent fallback. The inline duplicate could not be unit-tested
+without becoming a second code path that itself needed tests; deleting
+it removes a class of possible regressions (drift between canonical
+and inline impl) that was never actually guarding against a real
+failure mode.
+
+The "Files NOT to touch carelessly" row in `CLAUDE.md` that previously
+warned against weakening the inline fallback is superseded; the new
+contract is the three-line assertion block in `background.js` lines
+25–40.
+
+**Reversible by.** A real MV3 regression where ES-module service workers
+fail to load consistently across a Chrome channel we must support. At
+that point we revert to classic SW + `importScripts`, and re-evaluate
+whether to restore the fallback or accept hard failure.
+
+**Landed.** `refactor-on-main` commit `021e87a`, 2026-04-23.
 
 ---
 
@@ -16,30 +295,31 @@ wins and the RFC must be updated.
 
 **Context.** The Chrome login popup (`openLoginPopup` in `extension/background.js`)
 must drive students through **real TXST SSO** when registration session data is
-missing or stale. Opening **`…/ssb/registration/registration` first** often
+missing or stale. Opening `**…/ssb/registration/registration` first** often
 painted Banner’s **anonymous “What would you like to do?” hub** — same broad
-URL family as a signed-in flow — while **`fetch`/logout priming** in the service
+URL family as a signed-in flow — while `**fetch`/logout priming** in the service
 worker did not always clear enough **tab** cookie state to leave that hub.
 Users sat on a half-session surface that never showed the IdP.
 
 **Decision.**
 
 1. **Initial popup URL** — `https://reg-prod.ec.txstate.edu/StudentRegistrationSsb/saml/login`
+
 (SP-initiated SAML; Ellucian standard path). Banner redirects to
 `authentic.txstate.edu` when credentials are needed.
 2. **Recovery after failed registration JSON probes** — navigate the popup tab to
 the same `/saml/login` URL (with a cache-busting query param), after the
-existing **`/saml/logout?local=true`** `fetch` that clears cookies in the
+existing `**/saml/logout?local=true`** `fetch` that clears cookies in the
 worker. Do **not** rely on reloading `/registration` alone.
 3. **DegreeWorks fallback** (`restartFromDegreeWorks`) — after a worksheet load,
-send the tab to **`/saml/login`**, not straight to `/registration`, so the
+send the tab to `**/saml/login`**, not straight to `/registration`, so the
 student does not fall back into the anonymous hub.
-4. **Tab update listener** — pause JSON verification timers only on **actual
-IdP / SAML POST** URLs (`authentic.txstate.edu`, `…/idp/profile/SAML2/POST/SSO`),
-**not** on `/saml/login`. The extension sometimes navigates the tab to
+4. Tab update listener — pause JSON verification timers only on actual
+IdP / SAML POST URLs (`authentic.txstate.edu`, `…/idp/profile/SAML2/POST/SSO`),
+not on `/saml/login`. The extension sometimes navigates the tab to
 `/saml/login` on purpose; treating it like “user is at IdP” cleared timers and
 broke recovery.
-5. **`scheduleVerify`** — allow rescheduling when the tab navigates again (clear
+5. `**scheduleVerify`** — allow rescheduling when the tab navigates again (clear
 the previous timer) so a return from SSO starts a fresh probe cycle; drop the
 `if (verifying) return` guard that could skip probes after IdP completion.
 6. **Probe scope** — consider any `…/StudentRegistrationSsb/ssb/…` load (not only
@@ -54,6 +334,7 @@ assume that shape.
 **Postmortem-in-advance.** *Six months from now we rolled this back.*
 
 1. **Failure mode:** TXST changes the SAML entry path (different path than
+
 `/saml/login`). **Mitigation:** capture the new DevTools navigation from a
 clean profile; one-line URL constant update in `openLoginPopup`.
 2. **Failure mode:** `/saml/login` loops or 404s for a subset of accounts.
@@ -169,7 +450,7 @@ validation on missing options, empty-wildcards no-op, and
 termCode=null behavior. Total suite now 108 passing, 0 failing.
 - `tests/unit/run.js` — minimal runner change to await `c.run()` when
 it returns a promise, keeping all pre-existing sync tests unchanged.
-- `docs/bug4-eligible-diagnosis.md` — status header updated; revised
+- `docs/bugs/bug4-eligible.md` — status header updated; revised
 strategy table marks A/B/C shipped, D/E/sections-optimization
 deferred.
 - `HANDOFF.md` — phase table row X rewritten; next-action #4 closed,
@@ -325,69 +606,6 @@ if a single flag gets reintroduced elsewhere.
 
 ---
 
-## 2026-04-21 PM — D16: Codify model-and-chat-routing rules for every AI session
-
-**Context.** API budget is finite (~$20/month of included quota) and
-long chats get quadratically expensive because every turn re-loads the
-full transcript. The team asked for explicit instructions that every future
-AI session reads, so the assistant *proactively* says when to drop to a
-cheaper model or start a new chat — not only when a contributor notices and asks.
-
-**Decision.** Add a "Session hygiene" section at the top of HANDOFF.md
-(above Process gates) with three rules the AI must follow on every
-response:
-
-1. **Recommend Auto mode** (Sonnet / GPT-4o-mini) when the task is
-  pattern-following (tests, wiring, commits, UI tweaks, doc edits,
-   fixes with an existing diagnosis doc).
-2. **Stay on Opus / API** when the task is design, algorithm,
-  undiagnosed debugging, prompt engineering, or a first-time phase.
-3. **Recommend a new chat** when the chat crosses ~20 substantive
-  turns, when switching phases, when a logical unit just wrapped, or
-   when the model catches itself re-reading the same files. When
-   recommending, supply the exact opener to paste.
-
-Honesty clause: if the model does not actually know the token burn, it
-says so instead of inventing a percentage.
-
-**Rationale.** A contributor should not have to monitor token usage — that's the
-assistant's job. The rule lives in HANDOFF.md (not in this decisions
-log) because HANDOFF is what every fresh chat is instructed to read
-first. The current plan has at least three tasks (Bug 6, Layer B
-wiring, doc updates) that do not need Opus, and shifting them to Auto
-conservatively buys back multiple fresh-chat budgets for the harder
-work (Bug 1/3 solver, Phase 1.5, Phase 5 planner, Phase 4 advising).
-
-**Reversible by.** Any maintainer (edit the Session hygiene section in
-HANDOFF.md; this decision record stays as the audit trail).
-
----
-
-## 2026-04-21 PM — D15: Trim process gates to 3 essentials
-
-**Context.** The original 6 process gates from D10 were patterned on a
-multi-person team. This project has a limited API budget. The team flagged
-that the documentation overhead had consumed ~32% of this month's API quota
-in one session.
-
-**Decision.** Cut the gates to three: postmortem-in-advance, feature flag
-per phase, metric baseline before merge. Fold the "prompt-vs-code audit"
-and "what would the LLM do wrong here?" questions into the postmortem as
-required bullets when the change touches a prompt. Delete the weekly log
-entirely — it was decoration for a one-person project.
-
-**Rationale.** The postmortem-in-advance has already paid for itself twice
-this week: it caught the `importScripts` fallback path in Phase 1 wiring
-and surfaced the shadow-mode parity log as the right safety net. Feature
-flags are non-negotiable — rollback without a flag means a revert, which
-spends more context and breaks trust. Metric baselines are the only
-mechanism keeping us honest across phases. The other two were pre-emptive
-checklists whose output was 95% overlap with what the postmortem asks.
-
-**Reversible by.** Any maintainer (trivially — re-expand the gates in HANDOFF).
-
----
-
 ## 2026-04-21 PM — D14: Bug 1 root cause is solver enumeration bias
 
 **Context.** A maintainer captured a full rank-breakdown trace from a real run
@@ -536,79 +754,6 @@ fork from it. Nothing locks us in.
 
 ---
 
-## 2026-04-21 — D11: Bug-fix order (post-screenshot triage)
-
-**Context.** Two new bugs surfaced during the 2026-04-21 review: (5) class
-overlap is being mis-detected (screenshot shows phantom conflict between a
-Mon/Wed math class and an online CS class); (6) the `Import` button UX is
-broken after auth expiry and should eventually be eliminated entirely.
-
-**Decision.** Priority ordering for *remaining* work:
-
-1. **Bug 5 — overlap detection** (quick win, high trust impact). Ship before
-  Phase 1 wiring.
-2. **Phase 1 wiring** (background.js emits the graph; `deriveEligible` drives
-  the solver). Gated on RFC sign-off.
-3. **Bug 4 live fetcher** (wildcard expansion via DW `courseInformation`).
-4. **Phase 1.5** (graph-native solver + many-to-many) — fixes Bug 2.
-5. **Phase 2** (scorer fidelity: fuzzy time prefs + `preferInPerson`) — fixes
-  Bugs 1 & 3. Requires a real trace dump before code lands (see D7).
-6. **Phase 2.5** (prereq awareness within a term) — new, required for the
-  advisor vision.
-7. **Phase 3** (archetype ranking).
-8. **Phase 4a** (pre-advising flow).
-9. **Phase 4b** (advisor brief + RAG).
-10. **Phase 5** (multi-semester path planner).
-11. **Bug 6** (import UX overhaul toward "no button, just load").
-12. **Max's refactor** (file-split of `tab.js`/`background.js`).
-
-**Rationale.** Bug 5 is a data-correctness bug that shakes user trust in every
-schedule the product returns — must-fix before we invest more. Bug 6 is
-medium-effort, medium-impact, and the user explicitly said "focus on what we
-got". Max's refactor lands last because every test + module boundary we ship
-before then is a safety net that makes the refactor mechanical.
-
-**Reversible by.** Any phase can be re-ordered by updating this entry with a
-reason. Phase 5 can slip below Phase 4b if the advisor pipeline doesn't need
-seasonality data as much as we currently think.
-
----
-
-## 2026-04-21 — D10: Adopt the process toolset, not just plan docs
-
-**Context.** The team asked whether plan-doc-driven AI coding is the "gold
-standard". The honest answer is it's one of several good patterns; what makes
-it work here is the surrounding process, not the doc.
-
-**Decision.** Adopt the following as gates, not suggestions:
-
-- **Postmortem-in-advance** per phase: before code lands, spend 5 minutes
-writing "It's six months from now and we rolled this back. What happened?"
-Record the top two failure modes in the phase's RFC before starting.
-- **Prompt-vs-code audit** per LLM change: every new instruction to
-`callIntent` / `callAffinity` / `callAdvisor` gets asked "could this live
-in deterministic JS instead?". If yes, push it to code.
-- **Metric baselines** before every Phase-N merge: snapshot
-`honoredRate` / `archetypeDistance` / `penaltyEffectiveness` into
-`docs/baselines/phaseN-*.json` on the fixtures. Phase N+1 cannot merge if
-any regresses without a written justification.
-- **Feature flags per phase**: use `chrome.storage.local` keys like
-`bp_phase1_wiring` so rollback is one toggle, not a revert.
-- **Weekly status** (Monday AM) in `HANDOFF.md`: what landed, what's stuck,
-who is touching what (especially as Max's refactor approaches).
-- **"What would the LLM do wrong here?" checklist** for LLM-touching
-changes: enumerate 3 concrete misbehaviors and whether the deterministic
-layer catches each.
-
-**Rationale.** Each of these caught or prevented a specific problem in the
-phases we've already shipped. Making them standing gates keeps Phase 2+
-(which changes user-visible scoring) honest.
-
-**Reversible by.** Aidan may drop any gate if it's costing more than it
-saves; record the drop as a new entry.
-
----
-
 ## 2026-04-21 — D9: Many-to-many rule satisfaction IS surfaced to students
 
 **Context.** DegreeWorks marks each rule/course with `EXCLUSIVE` ("DontShare"
@@ -740,7 +885,7 @@ already-hydrated data.
 
 **Reversible by.** Discovery that DegreeWorks rate-limits or refuses certain
 wildcard shapes (e.g. `@@ with ATTRIBUTE=xxx`). At that point we fall back
-to the pattern documented in `docs/bug4-eligible-diagnosis.md` Layer D1:
+to the pattern documented in `docs/bugs/bug4-eligible.md` Layer D1:
 use the concrete `hideFromAdvice` fallback courses the audit already
 lists under the attribute wildcard.
 
@@ -797,20 +942,3 @@ then adds the new semantics under a feature flag.
 
 **Reversible by.** If Phase 1.5 slips past 6 weeks, we consider splitting
 it further (ChooseN-only first, many-to-many later).
-
----
-
-## 2026-04-21 — D1: Plan-doc-driven workflow with grumpy critique gates
-
-**Context.** How are we working together?
-
-**Decision.** Every substantive change gets (a) an RFC or diagnosis doc
-*before* code, (b) a grumpy-senior-engineer critique pass, (c) unit tests
-that can run in Node without OpenAI, (d) fixture-grounded assertions where
-possible, and (e) a postmortem-in-advance per phase.
-
-**Rationale.** Documented in `HANDOFF.md`. Caught every architectural
-mistake we would otherwise have made in this conversation.
-
-**Reversible by.** For small, local changes (a button, a color, a typo),
-this overhead is skipped. Use judgment.

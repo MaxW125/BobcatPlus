@@ -5,7 +5,7 @@
 // (`txstFromAudit.js`) is the sole producer; downstream consumers
 // (`scheduleGenerator.js`, eventually the solver) treat the graph as opaque.
 //
-// Shape defined in `docs/requirement-graph-rfc.md`. Any type change here must
+// Shape defined in `docs/plans/requirement-graph.md`. Any type change here must
 // land a companion RFC update in the same PR.
 //
 // Dual-export: usable both in the extension runtime (attaches to

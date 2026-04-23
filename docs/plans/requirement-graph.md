@@ -1,14 +1,19 @@
-# RFC — RequirementGraph (Phase 1 design, TXST only)
+# RequirementGraph — design note (Phase 1 + 1.5 open questions)
 
-Status: **Draft, no code yet.** Reviewer: . Supersedes the flat `needed[]` contract
-between `background.js` and `scheduleGenerator.js`.
+**Status:** ✅ **Phase 1 shipped** (`0cbceb6`, D2 / D17). The parser lives in
+`extension/requirements/{graph,txstFromAudit,wildcardExpansion}.js`; `deriveEligible`
+produces the legacy flat shape for the current solver. **Phase 1.5 (graph-native
+solver, ChooseN + many-to-many) remains open** — the design sections below and the
+"Open design questions" list are the working notes for that phase. Everything
+marked *pre-ship* below is preserved as historical rationale; anywhere this doc
+contradicts live code, code wins and this doc must be updated.
 
-Scope: **Texas State University** DegreeWorks audits only. No adapter interface,
-no second-school abstractions. The day we onboard university #2, we extract. Not before.
+Scope: **Texas State University** DegreeWorks audits only (D3). No adapter interface
+until university #2 ships.
 
-Grounded in fixture: `tests/fixtures/audits/audit-english-ba.json` (Greer, BA English
-CW + minor in Popular Culture). A CS BS audit will extend but not contradict the types
-below; if it does, the design needs to revise, not the other way around.
+Grounded in fixture: `tests/fixtures/audits/audit-english-ba.json` (BA English
+CW + minor in Popular Culture) and `audit-computerscience-bs-minor-music.json`
+(see the 2026-04-21 update at the bottom).
 
 ---
 
