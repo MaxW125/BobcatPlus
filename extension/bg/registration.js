@@ -26,6 +26,15 @@
 //      SP-initiated SAML here. Also primes `/saml/logout?local=true`
 //      beforehand so we don't get stuck on a stale half-auth hub.
 //
+//      After Banner's probe passes, the **same popup tab** is sent to
+//      the DegreeWorks worksheet URL so the browser completes DW's SP
+//      SAML (the IdP is already warm). Silent SW fetch cannot warm DW
+//      — its API returns 401 without redirect — so this navigation is
+//      the minimal fix for clear-cookies / cold-DW. On worksheet load
+//      (`DW_SUCCESS`), we fire `loginSuccess` and close. Recovery from
+//      failed Banner probe still uses DW → bounce to Banner SAML; see
+//      `awaitingDwWorksheetAfterBanner` below.
+//
 // All schedule fetches are serialized through `withSessionLock` — see
 // CLAUDE.md § Load-bearing invariants (#1). The probe loop inside
 // `openLoginPopup` intentionally skips the lock when it's the only thing
@@ -95,6 +104,12 @@ function bannerStudentJsonAjaxHeaders(syncToken) {
 // regex and resubmit to the IdP. After up to 8 hops we expect a JSON
 // body — any longer and we assume something structural went wrong and
 // surface the raw HTML to the caller.
+//
+// `extractHtmlAttr` HTML-entity-decodes its result. Banner's current
+// `/saml/login` AuthnRequest form ships with an entity-encoded action
+// (`https&#x3a;&#x2f;&#x2f;eis-prod…`); a raw regex capture without
+// decoding sends us into an infinite `/ssb/classRegistration/https&`
+// redirect loop. See bug11 correction notes.
 
 function registrationBodyLooksLikeJson(text) {
   const t = text.trim();
@@ -113,13 +128,35 @@ function normalizeRegistrationEventsArray(payload) {
   return [];
 }
 
+/**
+ * Decode the HTML entities that Banner's SAML-flavored HTML now uses in
+ * form attributes — e.g. `action="https&#x3a;&#x2f;&#x2f;eis-prod.ec.txstate.edu…"`.
+ * Without decoding, `new URL(rawAction, baseHref)` treats the string as a
+ * relative path and we POST to `/ssb/classRegistration/https&`, which 302s
+ * back to `/saml/login` and loops forever. `tab.js` uses `DOMParser` which
+ * decodes entities for free — this helper keeps the SW in sync.
+ */
+function decodeHtmlEntities(s) {
+  if (!s) return s;
+  return s
+    .replace(/&#x([0-9a-f]+);/gi, (_, h) =>
+      String.fromCodePoint(parseInt(h, 16)),
+    )
+    .replace(/&#([0-9]+);/g, (_, d) => String.fromCodePoint(parseInt(d, 10)))
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&amp;/g, "&");
+}
+
 function extractHtmlAttr(fragment, attrName) {
   const re = new RegExp(
     "\\b" + attrName + "\\s*=\\s*(['\"])([\\s\\S]*?)\\1",
     "i",
   );
   const m = fragment.match(re);
-  return m ? m[2] : "";
+  return m ? decodeHtmlEntities(m[2]) : "";
 }
 
 function listFormBlocks(htmlText) {
@@ -359,6 +396,13 @@ export function openLoginPopup(sendResponse, registrationTermExplicit) {
   let restartCount = 0;
   /** Resolved once per login attempt — must match Bobcat Plus term selector when provided. */
   let resolvedProbeTerm = registrationTermExplicit || null;
+  /**
+   * After `probeBannerRegistration` succeeds, we load the DW worksheet in
+   * the popup so the real browser can set the DW SP cookie. While this
+   * is true, the next `DW_SUCCESS` URL finishes login instead of
+   * redirecting to Banner (recovery path).
+   */
+  let awaitingDwWorksheetAfterBanner = false;
 
   function cleanup() {
     chrome.tabs.onUpdated.removeListener(onLoginTabUpdated);
@@ -379,12 +423,26 @@ export function openLoginPopup(sendResponse, registrationTermExplicit) {
 
   /** Last resort — DegreeWorks entry (user may get a fresh SSO redirect from there). */
   function restartFromDegreeWorks(tabId, reason) {
+    awaitingDwWorksheetAfterBanner = false;
     clearVerifySchedule();
     restartCount++;
     try {
       chrome.tabs.update(tabId, { url: DW_URL });
     } catch (_) {}
     if (reason) console.warn("[BobcatPlus] login popup:", reason);
+  }
+
+  function finishLoginSuccess() {
+    awaitingDwWorksheetAfterBanner = false;
+    clearVerifySchedule();
+    cleanup();
+    try {
+      chrome.windows.remove(popupWindowId, () => {
+        chrome.runtime.sendMessage({ type: "loginSuccess" });
+      });
+    } catch (_) {
+      chrome.runtime.sendMessage({ type: "loginSuccess" });
+    }
   }
 
   async function pickDefaultTermCode() {
@@ -407,8 +465,12 @@ export function openLoginPopup(sendResponse, registrationTermExplicit) {
   }
 
   /**
-   * Try the fast history handshake first (one flow), then full `getCurrentSchedule` if needed.
-   * Avoids three stacked handshakes on every verify tick while the user is on the login popup.
+   * Banner registration readiness — fast history handshake, then full
+   * `getCurrentSchedule` fallback. Kept cheap so the verify tick stays
+   * sub-second while the user is on the login popup.
+   *
+   * DegreeWorks is warmed separately by navigating the popup tab to the
+   * worksheet after this probe succeeds — see `awaitingDwWorksheetAfterBanner`.
    */
   async function probeBannerRegistration(term) {
     if (!term) return false;
@@ -449,15 +511,17 @@ export function openLoginPopup(sendResponse, registrationTermExplicit) {
       if (!resolvedProbeTerm) resolvedProbeTerm = await pickDefaultTermCode();
       const ok = await probeBannerRegistration(resolvedProbeTerm);
       if (ok) {
-        clearVerifySchedule();
-        cleanup();
-        try {
-          chrome.windows.remove(popupWindowId, () => {
-            chrome.runtime.sendMessage({ type: "loginSuccess" });
-          });
-        } catch (_) {
-          chrome.runtime.sendMessage({ type: "loginSuccess" });
+        if (!awaitingDwWorksheetAfterBanner) {
+          awaitingDwWorksheetAfterBanner = true;
+          clearVerifySchedule();
+          try {
+            chrome.tabs.update(tabId, { url: DW_URL });
+          } catch (_) {}
+          return;
         }
+        try {
+          chrome.tabs.update(tabId, { url: DW_URL });
+        } catch (_) {}
         return;
       }
 
@@ -515,8 +579,13 @@ export function openLoginPopup(sendResponse, registrationTermExplicit) {
       return;
     }
 
-    // Fallback path: DegreeWorks worksheet → force Banner SSO (avoids anonymous SSB hub).
+    // DegreeWorks worksheet loaded — either finish (happy path after Banner)
+    // or bounce to Banner SAML (recovery when Banner probe failed first).
     if (tab.url.includes(DW_SUCCESS)) {
+      if (awaitingDwWorksheetAfterBanner) {
+        finishLoginSuccess();
+        return;
+      }
       chrome.tabs.update(tabId, {
         url: REG_SAML_LOGIN_URL + "?_dw=" + Date.now(),
       });

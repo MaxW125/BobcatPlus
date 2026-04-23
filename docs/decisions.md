@@ -12,6 +12,209 @@ wins and the RFC must be updated.
 
 ---
 
+## 2026-04-23 (late) — D22: Revert D21 — popup probe stays Banner-only; fix SAML form parser entity decode instead
+
+**Context.** D21 shipped as an uncommitted patch on `refactor-on-main`;
+user smoke testing failed. HAR from the failing run
+(`bugged-login.har`) showed two independent issues that D21 got
+wrong:
+
+1. **DW `/api/students/myself` is API-aware.** It returns `401` directly
+   with no redirect to SAML (11 hits in the HAR, all `401`, zero
+   `Location:` headers). A silent SW fetch cannot warm DW's SP cookie
+   because there is no SAML chain for `resolveRegistrationHtmlToJsonSw`
+   to follow. D21's `probeDegreeWorksReady` is architecturally
+   impossible on that endpoint.
+2. **Death spiral when DW probe fails forever.** With `probeLoginReady`
+   stuck returning `false`, the verify loop falls through to
+   `softRefreshRegistrationTab`, which calls `/saml/logout?local=true`
+   and nukes the Banner session the user just completed. Banner then
+   needs re-auth, probe fails again, another `saml/logout` fires, etc.
+   Visible in the HAR as `getRegistrationEvents` 200-JSON at `08:22:04`
+   followed by `saml/logout` fires at `08:22:06`, `:09`, `:13` — the
+   exact "slowly bouncing between Banner and DW, stopped on a weird
+   Banner page" the user described.
+3. **Separate pre-existing parser bug surfaced.** 160 POSTs to
+   `/ssb/classRegistration/https&` in the HAR are caused by
+   `extractHtmlAttr` in `extension/bg/registration.js` not decoding
+   HTML entities. Banner's current `/saml/login` AuthnRequest form
+   ships with
+   `action="https&#x3a;&#x2f;&#x2f;eis-prod.ec.txstate.edu&#x3a;443&#x2f;samlsso"`.
+   The regex captures the raw string, `new URL(rawAction, baseHref)`
+   treats it as a relative path, we POST to garbage, Banner 302s back
+   to `/saml/login`, loop. `tab.js` does not hit this because it uses
+   `DOMParser`, which decodes entities for free. This is the
+   "split-brain SW vs tab parser" Composer's earlier notes called out.
+
+**Decision.**
+
+1. Revert `probeLoginReady` + `probeDegreeWorksReady` in
+   `extension/bg/registration.js`. Restore `probeBannerRegistration`
+   (the D19-era single-channel probe).
+2. Fix `extractHtmlAttr` to HTML-entity-decode its return value before
+   handing it to `new URL(...)`. The SW's regex path now matches the
+   tab's `DOMParser` path on this axis.
+3. Accept DW half-auth after clear-cookies as a known limitation. The
+   user has a working workaround (visit DW once manually to trigger
+   DW's SAML). `tab.js` `checkAuth` still gates on both SPs, so the
+   tab correctly asks the user to re-authenticate when DW is cold.
+
+**Rationale.** D21's premise — that the SW could warm DW silently —
+was wrong. DW's API endpoint does not redirect unauthed requests; it
+401s. There is no silent path to set the DW SP cookie. The only
+silent fetches that can warm a Shibboleth SP are those that hit a URL
+which the SP itself redirects into SAML (i.e., UI endpoints, not
+API endpoints). Even that path would have been stopped by the
+pre-existing entity-decode bug in item 3 above. Fixing the real
+pre-existing loop bug is the load-bearing change; the D21 probe was
+cargo-culted architecture that caused more breakage than it fixed.
+
+**Postmortem-in-advance.** *If we hit half-auth complaints again:*
+
+1. **Preferred path:** have `openLoginPopup` navigate the popup tab
+   through the DW worksheet URL once after `probeBannerRegistration`
+   passes, and wait for the `DW_SUCCESS` URL before firing
+   `loginSuccess`. That uses the real browser (with JavaScript) to
+   execute the IdP's auto-post, which silent fetch cannot. Same
+   mechanism `restartFromDegreeWorks` already uses — we'd just wire it
+   into the happy path instead of the recovery path. Small change,
+   ~20 lines, self-contained.
+2. **Alternative:** loosen `checkAuth` in `tab.js` to require Banner
+   only and lazy-warm DW on first DW-dependent action. Rejected
+   today because DW is needed early in the planner flow (audit
+   overview, degree requirements).
+
+**Reversible by.** Revert this commit; D21's code still works for any
+future environment where DW's API is re-fronted with an SP redirect.
+
+**Landed.** `refactor-on-main`, 2026-04-23, after HAR-verified failure
+of D21. See `docs/bug11-post-saml-degreeworks-warmup-diagnosis.md`
+(updated with correction notes).
+
+Item **3** ("accept DW half-auth after clear-cookies") is **superseded
+for the login-popup flow** by **D23** — users who complete SAML in the
+popup now hit DW in the same tab before `loginSuccess`.
+
+---
+
+## 2026-04-23 — D23: Happy-path login popup navigates to DegreeWorks worksheet after Banner probe
+
+**Context.** D22 treated post-clear-cookies DW coldness as acceptable
+because the user could open DegreeWorks manually once. That still left
+the planner tab on "Not logged in" after a successful Banner SAML in
+the popup — bad UX for the common "clear all cookies" dev/test flow.
+
+**Decision.** In `extension/bg/registration.js` `openLoginPopup`, after
+`probeBannerRegistration` succeeds: set `awaitingDwWorksheetAfterBanner`
+and `chrome.tabs.update` the popup tab to the DW worksheet URL (same
+as `restartFromDegreeWorks`). When `chrome.tabs.onUpdated` sees a URL
+containing `responsiveDashboard/worksheets` while that flag is set,
+call `finishLoginSuccess()` — close the popup and send `loginSuccess`.
+Do **not** redirect to Banner SAML in that case. When the flag is
+clear (recovery path after a failed Banner probe), keep the existing
+behavior: worksheet → `/saml/login?_dw=…`.
+
+If Banner probe passes again while the flag is already set (user
+navigated back to Banner SSB before the worksheet finished loading),
+re-`update` the tab to the worksheet URL.
+
+**Rationale.** DW's REST API does not initiate SAML (D22); only a real
+document navigation can complete the DW SP handshake. This reuses the
+same browser mechanism as recovery, wired into the happy path.
+
+**Reversible by.** Deleting the flag and the first-branch navigation in
+the probe success path; popup would again close on Banner-only readiness.
+
+**Landed.** `refactor-on-main`, 2026-04-23.
+
+---
+
+## 2026-04-23 — D21: Login popup gates `loginSuccess` on BOTH Banner and DegreeWorks being ready
+
+**Status (2026-04-23 late):** **Superseded by D22.** D21 never
+committed — reverted before landing after HAR evidence showed the
+premise (silent DW warm via SW fetch) was architecturally impossible.
+Kept here as a decision record; see D22 for details and the correct
+fix (entity-decode in the SAML form parser).
+
+
+**Context.** After D19 fixed the popup landing page (`/saml/login`), a
+second half-auth failure mode remained. The popup's verify tick only
+probed Banner registration; once Banner returned schedule data the popup
+fired `loginSuccess` and closed. But DegreeWorks is a distinct Shibboleth
+SP on `dw-prod.ec.txstate.edu`, and Banner's SAML round-trip only warms
+the Banner SP cookie jar on `reg-prod.ec.txstate.edu`. Result: popup
+closed, tab.js `checkAuth` (which requires both endpoints) immediately
+returned false, UI rendered "Not logged in" despite a successful SAML
+login a moment earlier. Reproducible on cleared cookies on both `main`
+and `refactor-on-main`. See `docs/bug11-post-saml-degreeworks-warmup-
+diagnosis.md`.
+
+**Decision.**
+
+1. `openLoginPopup` in `extension/bg/registration.js` replaces the
+   single-channel `probeBannerRegistration(term)` with a two-channel
+   `probeLoginReady(term)` that AND-gates on:
+   - `probeBannerReady(term)` — existing fast-then-slow schedule probe,
+     unchanged.
+   - `probeDegreeWorksReady()` — new silent fetch to
+     `https://dw-prod.ec.txstate.edu/responsiveDashboard/api/students/myself`
+     with `credentials: "include"` + `redirect: "follow"`. The IdP
+     session is already warm from Banner's SAML, so DW's SP-initiated
+     SAML completes silently via the auto-post HTML chain. Reuse the
+     existing SP-agnostic `resolveRegistrationHtmlToJsonSw` to resolve
+     the chain; accept only a body that parses to
+     `{ _embedded: { students: [...] } }`.
+2. `scheduleVerify`'s tick calls `probeLoginReady` — `loginSuccess`
+   only fires once both SPs are authenticated.
+3. The two-channel probe's AND-gate intentionally matches tab.js
+   `checkAuth`'s AND-gate. If one side ever needs to change, both sides
+   change together — they are a pair.
+
+**Rationale.** The popup and the tab are describing the same concept
+("is the user signed in?") on opposite sides of the extension wire. When
+those two descriptions disagree, the user experiences a "popup closed
+successfully, but the app says I'm not logged in" failure. The fix is
+to align the two definitions. Since tab.js `checkAuth` has historically
+been the authoritative consumer — it gates every action the tab takes —
+the popup's probe moves to match it, not the other way around.
+
+Probing DW inside the popup (in the SW) rather than asking the tab to
+warm DW post-`loginSuccess` keeps session-warming ceremony in one place
+(`openLoginPopup`), and keeps the popup closed until the user actually
+has a working session to return to. The alternative — let the popup
+close early and have the tab warm DW on its own — was rejected because
+the tab is where users see the "Not logged in" message, and the bad UX
+of seeing that message flash on after a successful login was the exact
+symptom we were fixing.
+
+**Postmortem-in-advance.** *Six months from now we rolled this back.*
+
+1. **Failure mode:** DegreeWorks consolidates with Banner onto a single
+   SP so the silent warm-up is redundant. **Mitigation:** collapse
+   `probeLoginReady` back to Banner-only; delete `probeDegreeWorksReady`.
+   Zero user-visible change.
+2. **Failure mode:** A DW-side outage makes the silent probe fail
+   persistently while Banner is healthy, stranding users in the popup
+   until the 90s deadline. **Mitigation:** the popup already sends
+   `loginCancelled` on deadline, and tab.js handles that gracefully.
+   If the outage is long enough to be a real problem, loosen
+   `probeDegreeWorksReady` to gate on `r.ok` only (accept 200-HTML) as
+   a temporary degraded mode; that's one line.
+3. **Failure mode:** DW changes `/api/students/myself` envelope shape
+   and the `_embedded.students[0]` check stops matching. **Mitigation:**
+   update the shape check to match the new response; this is the same
+   fragility `getStudentInfo` already has, not a new one.
+
+**Reversible by.** Reverting the `openLoginPopup` / probe changes in
+`extension/bg/registration.js`. Symptom reproduces immediately on any
+clear-cookies login flow.
+
+**Landed.** `refactor-on-main`, 2026-04-23 (pending user browser smoke
+before commit is pushed).
+
+---
+
 ## 2026-04-23 — D20: Service worker runs as an ES module; no inline `BPPerf.*` fallback
 
 **Context.** `extension/background.js` previously loaded

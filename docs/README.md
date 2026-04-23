@@ -47,6 +47,7 @@ Start new AI sessions with the **Top of the stack** entries, in order.
 | `[bug5-online-conflict-diagnosis.md](bug5-online-conflict-diagnosis.md)`       | ✅ Closed (shipped `fda436e`)                       | Online courses were flagged as conflicting with in-person courses because Banner populates `days` / `beginTime` / `endTime` on `INT` sections. |
 | `[bug6-import-ux-diagnosis.md](bug6-import-ux-diagnosis.md)`                   | 🟡 Deferred                                        | Auto-load current schedule + clear auth-expiry banner. Fix after Phase 2.                                                                      |
 | `[bug8-banner-half-auth-login-popup-diagnosis.md](bug8-banner-half-auth-login-popup-diagnosis.md)` | ✅ Closed (2026-04-22, D19)                         | Login popup opened Banner anonymous hub instead of TXST SSO; fix uses `/saml/login` as entry + recovery.                                         |
+| `[bug11-post-saml-degreeworks-warmup-diagnosis.md](bug11-post-saml-degreeworks-warmup-diagnosis.md)` | ✅ Closed (2026-04-23, D22 + D23 supersedes D21)                         | SAML SW parser entity-decode (`https&` loop). After Banner probe succeeds, popup navigates to DW worksheet (`D23`) so `checkAuth` sees both SPs without a manual DW tab. |
 
 
 ## Baselines
