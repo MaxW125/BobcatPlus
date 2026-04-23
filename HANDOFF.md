@@ -1,15 +1,18 @@
 # Bobcat Plus — AI Scheduler Handoff
 
 > **Refactor in flight (2026-04-23).** Branch `refactor-on-main` is porting
-> the `Refactor` branch's ES-module split onto current `main`. Six refactor
+> the `Refactor` branch's ES-module split onto current `main`. Seven refactor
 > commits landed (tests → SW module → leaf bg split → studentInfo +
-> registration → **`bg/plans.js`** — Banner Plan CRUD + `fetchPlanCalendar`),
-> plus **`3764566`** (bug11: SAML entity-decode + DW worksheet warm-up in the
-> login popup). `background.js` holds `runAnalysis` + message router (~550
-> lines); next is **commit 7** (`bg/analysis.js`). Eight `bg/*` modules touch
+> registration → **`bg/plans.js`** — Banner Plan CRUD + `fetchPlanCalendar` →
+> **`bg/analysis.js`** — `runAnalysis` + bail() contract test), plus
+> **`3764566`** (bug11: SAML entity-decode + DW worksheet warm-up in the
+> login popup). `background.js` is now a ~224-line onMessage router +
+> `analysisGeneration` counter; next is **commit 8** (split `tab.js` into
+> `tab/*` per Deviation B — new `tab/chat.js`). Nine `bg/*` modules touch
 > session mutex (`plans.js` uses `withSessionLock` on calendar hydrate),
-> RequirementGraph/`needed[]`, D19 popup, etc. Gate before commit 7: Chrome
-> smoke save/load/delete a Banner plan per `docs/refactor-on-main-plan.md`.
+> RequirementGraph/`needed[]`, D19 popup, 13 verbatim `bail()` guards, etc.
+> Gate before commit 8: full Chrome smoke — auth → term → eligible → AI →
+> lock/save — per `docs/refactor-on-main-plan.md`.
 
 Live status for the `LLM-algorithm` branch. Read `CLAUDE.md` first for
 project orientation, invariants, file map, and session-hygiene rules.
@@ -202,7 +205,10 @@ diagnosis doc.
 ## Recent commit history
 
 **Branch `refactor-on-main`** (structural port, in flight):
-- _commit 5 (pending push)_ — refactor(bg): studentInfo + registration — `bg/studentInfo.js` (getStudentInfo, getAuditData w/ RequirementGraph wiring, getDegreeAuditOverview, fetchCourseLinkFromDW) + `bg/registration.js` (getCurrentSchedule w/ registrationHistory fallback, openLoginPopup at `/saml/login`). `background.js` drops another ~1600 lines; tests + Node SW-graph smoke (11 modules) green
+- _commit 7 (pending push)_ — refactor(bg): extract analysis.js — `bg/analysis.js` (330 lines, under Deviation A's 400-line split threshold) owns `runAnalysis` with all 13 `bail()` guards verbatim + the Bug 4 wildcard-expansion block. `background.js` slims to a 224-line onMessage router + `analysisGeneration` counter. New `tests/unit/bailContract.test.js` pins guard count/definitions via `tests/mocks/chrome.js`. 133 unit tests green
+- `5b4fdae` — refactor(bg): extract plans.js — Banner Plan CRUD + `fetchPlanCalendar`
+- `3764566` — fix(extension): login popup — SAML form entity-decode + DW worksheet warm-up (D22 / D23 / bug11)
+- `f78264a` — refactor(bg): studentInfo + registration — `bg/studentInfo.js` (getStudentInfo, getAuditData w/ RequirementGraph wiring, getDegreeAuditOverview, fetchCourseLinkFromDW) + `bg/registration.js` (getCurrentSchedule w/ registrationHistory fallback, openLoginPopup at `/saml/login`)
 - `a3f6086` — refactor(bg): leaf split — constants / cache / session / bannerApi / prereqs
 - `021e87a` — refactor(sw): service worker flipped to ES module; inline `BPPerf` fallback deleted (D20)
 - `64c817d` — test: affinity cache wipe invariant + seeded `tests/mocks/chrome.js`
