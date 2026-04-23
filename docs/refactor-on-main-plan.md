@@ -1,7 +1,7 @@
 # Refactor-on-main — ES module split of background.js + tab.js
 
 **Status.** In flight. Branch: `refactor-on-main` (off `main @ 6d5c80e`).
-**Commits landed:** 7 of 9 (`3b9ccef`, `64c817d`, `021e87a`, `a3f6086`, `f78264a`, `5b4fdae`, `bcef8b9`).
+**Commits landed:** 7 of 9 (`3b9ccef`, `64c817d`, `021e87a`, `a3f6086`, `f78264a`, `5b4fdae`, `20e7991`).
 **Owner.** Aidan + AI sessions (Opus/API for commits 4–8, Auto for commit 9).
 **Gate discipline.** Commits 3–8 require a Chrome browser smoke before the next commit stacks on top. 133 unit tests must stay green on every commit (132 + `bailContract.test.js` added in commit 7).
 
@@ -100,7 +100,7 @@ From `CLAUDE.md § Load-bearing invariants`, plus the smoke-check protocol:
 | 4   | ✅     | `a3f6086` | Moved `bg/constants.js` (URL bases, `GRADE_MAP`, `SUBJECT_MAP`), `bg/cache.js` (`CACHE_TTL` + `cacheGet/Set/Age`), `bg/session.js` (`withSessionLock` module singleton), `bg/bannerApi.js` (`getTerms`, `getCurrentTerm`, `searchCourse`, `searchCoursesBySubjects`), `bg/prereqs.js` (`checkPrereqs`, `getCourseDescription`). `background.js` gained named ES imports; removed definitions dropped. 132 tests green, Node SW-module-graph smoke (FIFO + cache round-trip) ✓. | Manual smoke: eligible list fills <3s.                               |
 | 5   | ✅      | `f78264a` | Moved `bg/studentInfo.js` (`getStudentInfo`, `getDegreeAuditOverview`, `getAuditData` with RequirementGraph wiring + legacy `findNeeded` fallback, `fetchCourseLinkFromDW` wildcard-expansion helper). Moved `bg/registration.js` (`getCurrentSchedule` with `registrationHistory` fallback for closed terms, `openLoginPopup` at `/saml/login` per D19, synchronizer-token cache, SAML SW resolver incl. HTML-entity decode for SAML forms, DW worksheet post-Banner warm-up per D23). Later: `3764566` lands bug11 login fixes on top. `background.js` slimmed to plans + `runAnalysis` + router until commit 6. 132 tests green. | Closed-term smoke + parity spot-check completed by owner.                               |
 | 6   | ✅      | `5b4fdae` | Moved `bg/plans.js` — Banner Plan Ahead CRUD (`saveManualPlanToTxst`, `getBannerPlanItems`, `getAllBannerPlans`, `fetchPlanCalendar`, `deleteTxstPlan`, `getBannerPlanEvents`) + helpers. `background.js` now ~550 lines (`runAnalysis` + `onMessage`). 132 tests green.                                                                                                                                                                                                                                                                                            | Manual smoke: save/load/delete a Banner plan.                                             |
-| 7   | ✅      | `bcef8b9` | Moved `bg/analysis.js` (330 lines — under the 400-line Deviation A split threshold, so kept as one module). `runAnalysis` copied verbatim: all 13 `if (bail()) return;` guards preserved, Bug 4 wildcard-expansion block intact, named imports pull `cacheSet` / `getTerms` / `getCurrentTerm` / `searchCoursesBySubjects` / `checkPrereqs` / `getCourseDescription` / `getStudentInfo` / `getAuditData` / `fetchCourseLinkFromDW` from the leaf `bg/*` modules. `background.js` slims to a 224-line `onMessage` router + `analysisGeneration` counter; side-effect imports for `requirements/*` + `performance/concurrencyPool.js` stay here (single source per D20). New `tests/unit/bailContract.test.js` pins `bail()` / `current()` definitions and asserts exactly 13 guards in `runAnalysis.toString()` to prevent silent drift. 133 tests green. | Tests green + full smoke: auth → term → eligible → AI → lock/save. |
+| 7   | ✅      | `20e7991` | Moved `bg/analysis.js` (330 lines — under the 400-line Deviation A split threshold, so kept as one module). `runAnalysis` copied verbatim: all 13 `if (bail()) return;` guards preserved, Bug 4 wildcard-expansion block intact, named imports pull `cacheSet` / `getTerms` / `getCurrentTerm` / `searchCoursesBySubjects` / `checkPrereqs` / `getCourseDescription` / `getStudentInfo` / `getAuditData` / `fetchCourseLinkFromDW` from the leaf `bg/*` modules. `background.js` slims to a 224-line `onMessage` router + `analysisGeneration` counter; side-effect imports for `requirements/*` + `performance/concurrencyPool.js` stay here (single source per D20). New `tests/unit/bailContract.test.js` pins `bail()` / `current()` definitions and asserts exactly 13 guards in `runAnalysis.toString()` to prevent silent drift. 133 tests green. | Tests green + full smoke: auth → term → eligible → AI → lock/save. |
 | 8   | ⬜      | —         | Split `tab.js` into `tab/`* using direct imports (Deviation B — new `tab/chat.js`). Flip `tab.html` to `type="module"`. Slim `tab.js`.                                                                                                                                   | Tests green + full smoke.                                                        |
 | 9   | ⬜      | —         | Doc restructure per approved table (CLAUDE.md router, `docs/architecture.md`, `docs/invariants.md`, `docs/file-map.md`, `docs/open-bugs.md`, HANDOFF trim, per-module docstrings). File `docs/bug9` + `docs/bug10` diagnoses for Refactor fixes we deferred (see below). | —                                                                                |
 
@@ -130,14 +130,14 @@ Four bug-fix commits landed on `Refactor` after the module split. Handling per r
 cd /Users/aidanvickers/Desktop/BobcatPlus && git checkout refactor-on-main && git log --oneline main..HEAD && node tests/unit/run.js
 ```
 
-Model: Opus/API (commits 4–7 touch load-bearing SW code — session mutex, bail(), BPPerf).
+Model: Opus/API (per the status line, commits 4–8 are premium — commit 8 touches page-context invariants like the `registrationFetchQueue` singleton and `addToWorkingSchedule` lock transfer).
 
 Context to read:
 
 1. `CLAUDE.md` — project orientation, invariants, file map
 2. `HANDOFF.md` — current phase status
 3. `**docs/refactor-on-main-plan.md` (this doc)** — blueprint, invariants, commit chain
-4. `git show bcef8b9` — commit 7 (analysis.js extraction baseline for commit 8)
+4. `git show 20e7991` — commit 7 (analysis.js extraction baseline for commit 8)
 
 Task for next chat: **Commit 8** — split `extension/tab.js` into `extension/tab/*` using direct named imports per Deviation B (new `tab/chat.js` hosts `addMessage` + `waitWithChatCountdown` as a shared dependency of `tab/auth.js` and `tab/ai.js`; no more `setAddMessage` / `setWaitWithChatCountdown` callback injection). Flip `extension/tab.html` to `<script type="module" src="tab.js">`. Slim `tab.js` to ≤ 220 lines (boot IIFE + term-change handler + module wiring). Gate: tests green + full smoke.
 
