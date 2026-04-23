@@ -1,22 +1,15 @@
 # Bobcat Plus — AI Scheduler Handoff
 
 > **Refactor in flight (2026-04-23).** Branch `refactor-on-main` is porting
-> the `Refactor` branch's ES-module split onto current `main`. Five commits
-> landed: test safety net (`3b9ccef`, `64c817d`), SW ES-module flip
-> (`021e87a`), the leaf bg/* split (commit 4 — `bg/constants.js`,
-> `bg/cache.js`, `bg/session.js`, `bg/bannerApi.js`, `bg/prereqs.js`), and
-> the studentInfo + registration split (commit 5 — `bg/studentInfo.js`,
-> `bg/registration.js`). `background.js` is down ~2100 lines from commit 3
-> baseline and all seven bg/* modules preserve their load-bearing
-> invariants (session mutex FIFO, `searchCoursesBySubjects` +
-> `subjectSearch|v2|` cache keys, `self.BPPerf` timeout + mapPool wiring,
-> RequirementGraph source-of-truth for `needed[]`, `/saml/login` popup
-> per D19). Commit 5 gate: manual Chrome smoke — closed-term schedule
-> loads via `registrationHistory` path + `auditDiagnostics.parity`
-> spot-check on ≥3 real audits before commit 6 stacks. See
-> `docs/refactor-on-main-plan.md` for the full blueprint and paste-ready
-> opener. The LLM-algorithm `main` is otherwise the active trunk; bug
-> fixes continue there until the refactor lands.
+> the `Refactor` branch's ES-module split onto current `main`. Six refactor
+> commits landed (tests → SW module → leaf bg split → studentInfo +
+> registration → **`bg/plans.js`** — Banner Plan CRUD + `fetchPlanCalendar`),
+> plus **`3764566`** (bug11: SAML entity-decode + DW worksheet warm-up in the
+> login popup). `background.js` holds `runAnalysis` + message router (~550
+> lines); next is **commit 7** (`bg/analysis.js`). Eight `bg/*` modules touch
+> session mutex (`plans.js` uses `withSessionLock` on calendar hydrate),
+> RequirementGraph/`needed[]`, D19 popup, etc. Gate before commit 7: Chrome
+> smoke save/load/delete a Banner plan per `docs/refactor-on-main-plan.md`.
 
 Live status for the `LLM-algorithm` branch. Read `CLAUDE.md` first for
 project orientation, invariants, file map, and session-hygiene rules.
