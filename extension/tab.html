@@ -251,10 +251,14 @@
 
     <div class="status-bar" id="statusBar">Ready</div>
 
-    <!-- Script order matters: courseColors before facultyScraper before tab.js -->
+    <!-- Classic scripts must load before tab.js because tab/*.js modules
+         read window.{BP,BobcatFaculty,getChipForCourse,handleUserTurn,
+         buildStudentProfile,mergeCalendarBlocks,clearAffinityCache}. Classic
+         scripts run during parsing; ES modules defer, so by the time
+         tab.js evaluates these globals are already installed. -->
     <script src="courseColors.js"></script>
     <script src="facultyScraper.js"></script>
     <script src="scheduleGenerator.js"></script>
-    <script src="tab.js"></script>
+    <script type="module" src="tab.js"></script>
   </body>
 </html>

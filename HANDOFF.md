@@ -1,18 +1,20 @@
 # Bobcat Plus — AI Scheduler Handoff
 
 > **Refactor in flight (2026-04-23).** Branch `refactor-on-main` is porting
-> the `Refactor` branch's ES-module split onto current `main`. Seven refactor
+> the `Refactor` branch's ES-module split onto current `main`. Eight refactor
 > commits landed (tests → SW module → leaf bg split → studentInfo +
-> registration → **`bg/plans.js`** — Banner Plan CRUD + `fetchPlanCalendar` →
-> **`bg/analysis.js`** — `runAnalysis` + bail() contract test), plus
-> **`3764566`** (bug11: SAML entity-decode + DW worksheet warm-up in the
-> login popup). `background.js` is now a ~224-line onMessage router +
-> `analysisGeneration` counter; next is **commit 8** (split `tab.js` into
-> `tab/*` per Deviation B — new `tab/chat.js`). Nine `bg/*` modules touch
-> session mutex (`plans.js` uses `withSessionLock` on calendar hydrate),
-> RequirementGraph/`needed[]`, D19 popup, 13 verbatim `bail()` guards, etc.
-> Gate before commit 8: full Chrome smoke — auth → term → eligible → AI →
-> lock/save — per `docs/refactor-on-main-plan.md`.
+> registration → `**bg/plans.js`** — Banner Plan CRUD + `fetchPlanCalendar` →
+> `**bg/analysis.js**` — `runAnalysis` + bail() contract test → **commit 8:
+> split `tab.js` into `tab/*` per Deviation B** (new `tab/chat.js` hosts
+> `addMessage` + `waitWithChatCountdown`; `tab.html` flipped to
+> `type="module"`; root `tab.js` slimmed from 3159 → 212 lines)), plus
+> `**3764566**` (bug11: SAML entity-decode + DW worksheet warm-up in the
+> login popup). Tab context now has nine ES modules
+> (`state/chat/calendar/schedule/auth/modal/overview/eligibleList/ai`);
+> `background.js` is a ~224-line onMessage router + `analysisGeneration`
+> counter. Commit 8 Chrome smoke is done (auth → term → eligible → AI →
+> lock/save). Next gate before merging the series: commit 9 doc restructure
+> per `docs/refactor-on-main-plan.md`.
 
 Live status for the `LLM-algorithm` branch. Read `CLAUDE.md` first for
 project orientation, invariants, file map, and session-hygiene rules.
@@ -205,7 +207,9 @@ diagnosis doc.
 ## Recent commit history
 
 **Branch `refactor-on-main`** (structural port, in flight):
-- _commit 7 (pending push)_ — refactor(bg): extract analysis.js — `bg/analysis.js` (330 lines, under Deviation A's 400-line split threshold) owns `runAnalysis` with all 13 `bail()` guards verbatim + the Bug 4 wildcard-expansion block. `background.js` slims to a 224-line onMessage router + `analysisGeneration` counter. New `tests/unit/bailContract.test.js` pins guard count/definitions via `tests/mocks/chrome.js`. 133 unit tests green
+
+- **Commit 8 —** refactor(tab): split `extension/tab.js` into `extension/tab/*` per Deviation B. New `tab/chat.js` owns `addMessage` + `waitWithChatCountdown` + `sleep` + `escapeHtml` + `createCountdownSystemMessage` + `removeExistingScheduleRefreshPrompts` and is imported directly by `tab/auth.js` + `tab/ai.js` — no callback injection. Nine tab modules: `state.js` (shared mutable state + `$` + registration-event cache), `chat.js` (chat primitives), `calendar.js` (week grid + zoom + conflict status), `schedule.js` (workingCourses mutators + saved/Banner plans + save-to-TXST), `auth.js` (checkAuth + SAML + per-tab registrationFetchQueue + loadSchedule + Import button), `modal.js` (registration-event metadata helpers + RateMyProfessors URL + Banner section fetch + course/block modal wiring), `overview.js` (student header + degree-audit overview + week counters + Build/AI toggle + sidebar/resize wiring), `eligibleList.js` (`runAnalysisAndWait` + auto-load + cache-age chip + eligible list), `ai.js` (sendChat + thinking panel + applyAction + AI toolbar + calendar-block/avoid-day mutators). `extension/tab.html` flipped to `<script type="module" src="tab.js">`. Root `extension/tab.js` slimmed from 3159 → 212 lines and only boots the page + handles term `<select>` change. Dead code removed: `manualDraft` + `renderManualDraft` + `renderDraftOnCalendar` + `renderCoursesOnCalendar` + `setManualVisible` + `applyPreFilter` + `compressForLLM` + `sectionsConflict` + `findFirstConflict` (all were unreferenced by UI or `window.BP`). 133 unit tests green; module graph verified (every named import resolves to an existing named export) + runtime import-load smoke (no throw under DOM/chrome stub). Chrome smoke verified (auth → term → eligible → AI → lock/save).
+- `20e7991` — refactor(bg): extract analysis.js — `bg/analysis.js` (330 lines, under Deviation A's 400-line split threshold) owns `runAnalysis` with all 13 `bail()` guards verbatim + the Bug 4 wildcard-expansion block. `background.js` slims to a 224-line onMessage router + `analysisGeneration` counter. New `tests/unit/bailContract.test.js` pins guard count/definitions via `tests/mocks/chrome.js`. 133 unit tests green
 - `5b4fdae` — refactor(bg): extract plans.js — Banner Plan CRUD + `fetchPlanCalendar`
 - `3764566` — fix(extension): login popup — SAML form entity-decode + DW worksheet warm-up (D22 / D23 / bug11)
 - `f78264a` — refactor(bg): studentInfo + registration — `bg/studentInfo.js` (getStudentInfo, getAuditData w/ RequirementGraph wiring, getDegreeAuditOverview, fetchCourseLinkFromDW) + `bg/registration.js` (getCurrentSchedule w/ registrationHistory fallback, openLoginPopup at `/saml/login`)
@@ -214,13 +218,13 @@ diagnosis doc.
 - `64c817d` — test: affinity cache wipe invariant + seeded `tests/mocks/chrome.js`
 - `3b9ccef` — test: `validateSchedule` (12 cases) + Jaccard course-set dedup regression
 
-**Branch `main`** (trunk after LLM-algorithm merge `6d5c80e`):
+**Branch `main*`* (trunk after LLM-algorithm merge `6d5c80e`):
 
 - **D19 / Bug 8:** Banner login popup opens `/saml/login`
-  (SP-initiated SSO), recovery + DegreeWorks fallback aligned, verify
-  listener/timer fixes; docs: `docs/decisions.md` D19,
-  `docs/bug8-banner-half-auth-login-popup-diagnosis.md`, CLAUDE/HANDOFF/README.
-  _(Subject: `fix(auth): Banner login popup uses SAML SP entry`.)_
+(SP-initiated SSO), recovery + DegreeWorks fallback aligned, verify
+listener/timer fixes; docs: `docs/decisions.md` D19,
+`docs/bug8-banner-half-auth-login-popup-diagnosis.md`, CLAUDE/HANDOFF/README.
+*(Subject: `fix(auth): Banner login popup uses SAML SP entry`.)*
 - `e687ad6` — A1+B perf fix + `subjectSearch|v2|` cache versioning +
  `performance/concurrencyPool.js` + `docs/bug5-`*, `docs/bug6-`*,
 `docs/README.md`, `docs/CONTRIBUTING.md`, HANDOFF trim, CLAUDE.md rewrite
