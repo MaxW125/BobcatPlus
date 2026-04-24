@@ -13,8 +13,8 @@
 const fs = require("fs");
 const path = require("path");
 
-// Load the harness (eagerly loads scheduleGenerator.js under a window shim).
-require("./_harness");
+// Load the harness — H1: kicks off async ESM load, awaited in main() before tests run.
+const harness = require("./_harness");
 
 const UNIT_DIR = __dirname;
 const testFiles = fs
@@ -27,6 +27,10 @@ const testFiles = fs
 // Keeping both forms lets us keep the existing pure-sync tests unchanged
 // while supporting orchestrators that need an injected async fetcher.
 async function main() {
+  // Wait for ESM scheduler modules to finish loading before any test case runs.
+  // This ensures `const { BP } = require("./_harness")` in test files captures
+  // the real facade rather than the null placeholder.
+  await harness.init();
   let passed = 0;
   let failed = 0;
   let expectedFail = 0;

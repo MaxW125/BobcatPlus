@@ -18,6 +18,8 @@ import {
 import {
   addToWorkingSchedule, updateSaveBtn,
 } from "./schedule.js";
+import { handleUserTurn } from "../scheduler/index.js";
+import { buildStudentProfile, mergeCalendarBlocks } from "../scheduler/profile.js";
 import { runAnalysisAndWait } from "./eligibleList.js";
 
 // Local rejected-candidates memory so chip clicks can skip the LLM round-trip.
@@ -93,7 +95,7 @@ $("aiClearAllBtn")?.addEventListener("click", () => {
 
 export function applyNewCalendarBlocks(incoming) {
   if (!incoming || !incoming.length) return;
-  State.setCalendarBlocks(window.mergeCalendarBlocks(State.calendarBlocks, incoming));
+  State.setCalendarBlocks(mergeCalendarBlocks(State.calendarBlocks, incoming));
   chrome.storage.local.set({ calendarBlocks: State.calendarBlocks });
   if (State.studentProfile) State.studentProfile.calendarBlocks = State.calendarBlocks;
   renderCalendarFromWorkingCourses();
@@ -647,7 +649,7 @@ async function sendChat() {
       ...c, credits: getCreditsForCrn(c.crn),
     }));
 
-    const profile = State.studentProfile || window.buildStudentProfile({
+    const profile = State.studentProfile || buildStudentProfile({
       name: State.currentStudent?.name || "Student",
       major: (State.currentStudent?.major || "") +
         (State.currentStudent?.degree ? " — " + State.currentStudent.degree : ""),
@@ -660,7 +662,7 @@ async function sendChat() {
     profile.calendarBlocks = State.calendarBlocks;
     profile.avoidDays = State.avoidDays;
 
-    const { actions, updatedProfile } = await window.handleUserTurn({
+    const { actions, updatedProfile } = await handleUserTurn({
       userMessage: input,
       rawData: State.cachedRawData,
       studentProfile: profile,

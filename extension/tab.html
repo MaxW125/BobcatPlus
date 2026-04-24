@@ -252,13 +252,13 @@
     <div class="status-bar" id="statusBar">Ready</div>
 
     <!-- Classic scripts must load before tab.js because tab/*.js modules
-         read window.{BP,BobcatFaculty,getChipForCourse,handleUserTurn,
-         buildStudentProfile,mergeCalendarBlocks,clearAffinityCache}. Classic
-         scripts run during parsing; ES modules defer, so by the time
-         tab.js evaluates these globals are already installed. -->
+         read window.{BobcatFaculty,getChipForCourse}. Classic scripts run
+         during parsing; ES modules defer, so by the time tab.js evaluates
+         these globals are already installed.
+         scheduleGenerator.js removed in C6 — tab/*.js now import directly
+         from ./scheduler/index.js, ./scheduler/profile.js, ./scheduler/time.js. -->
     <script src="courseColors.js"></script>
     <script src="facultyScraper.js"></script>
-    <script src="scheduleGenerator.js"></script>
     <script type="module" src="tab.js"></script>
   </body>
 </html>
