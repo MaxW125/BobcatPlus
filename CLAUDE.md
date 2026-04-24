@@ -106,8 +106,7 @@ Keep it ≤8 lines. Receipt for the next contributor, not a report.
 
 - `main` — stable; ships to the Chrome Web Store.  
 - `Demo` — external demos.  
-- `LLM-algorithm` — active scheduler experiments.  
-- `refactor-on-main` — ES module split of `background` / `tab` (retrospective at `docs/postmortems/refactor-on-main-split.md`).
+- `scheduler-refactor` — scheduleGenerator.js split into `scheduler/*`; ready to merge (retrospective at `docs/postmortems/scheduler-refactor.md`).
 
 Milestones merge via PR. Prefer `git revert` for rollback (D17); feature flags
 only when a phase needs shadow mode, then remove.
