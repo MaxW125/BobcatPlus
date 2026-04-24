@@ -1,6 +1,6 @@
 // ============================================================
 // 14. GOLDEN-PROMPTS FIXTURE RUNNER
-// Run via window.BP.runFixture(fixture, { apiKey, rawData, profile })
+// Run via: import { runFixture } from "./scheduler/fixture.js"
 // Fixture entries declare property-test assertions, not exact matches.
 // ============================================================
 

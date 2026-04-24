@@ -1,12 +1,12 @@
 // Affinity cache wipe invariant — docs/invariants.md #4.
 //
 // Why this file exists:
-//   The affinityCache in scheduleGenerator.js memoizes Affinity-LLM scores
-//   across repeat calls within a user session. Without the wipe at the top
-//   of each handleUserTurn (line ~1839), career keywords from a prior turn
+//   The affinityCache in scheduler/llm/affinity.js memoizes Affinity-LLM
+//   scores across repeat calls within a user session. Without the wipe at
+//   the top of each handleUserTurn, career keywords from a prior turn
 //   silently bias the next turn — a "stick" with no user-visible trace. The
-//   invariant is enforced at the primitive level by `affinityCache.clear()`
-//   exposed on `window.clearAffinityCache`.
+//   invariant is enforced by `clearAffinityCache()` exported from affinity.js
+//   and called as the first statement in handleUserTurn (scheduler/index.js).
 //
 //   Pre-refactor plan (commits 2–8 on refactor-on-main): pin the primitive
 //   contract here so the wipe can't silently regress during the module
@@ -22,8 +22,8 @@ const { BP, assertEqual, assertTrue } = require("./_harness");
 const cases = [];
 
 // Build an OpenAI response that openaiChat → openaiJson will parse into
-// `{ scores: {...} }`. The shape must match openaiChat's expectations on
-// lines 342–345 of scheduleGenerator.js.
+// `{ scores: {...} }`. The shape must match openaiChat's expectations in
+// scheduler/llm/openai.js.
 function stubOkResponse(scoresByCourse) {
   const jsonBody = JSON.stringify({ scores: scoresByCourse });
   return {
@@ -73,7 +73,7 @@ cases.push({
   async run() {
     const { calls, restore } = runWithFetchStub();
     try {
-      window.clearAffinityCache();
+      BP.clearAffinityCache();
       await BP.callAffinity({
         eligible: eligibleSample,
         careerKeywords: ["security"],
@@ -107,7 +107,7 @@ cases.push({
     // cleared Map is the wrong one — this test regresses.
     const { calls, restore } = runWithFetchStub();
     try {
-      window.clearAffinityCache();
+      BP.clearAffinityCache();
       await BP.callAffinity({
         eligible: eligibleSample,
         careerKeywords: ["cybersecurity"],
@@ -117,7 +117,7 @@ cases.push({
       });
       assertEqual(calls.length, 1);
 
-      window.clearAffinityCache();
+      BP.clearAffinityCache();
 
       await BP.callAffinity({
         eligible: eligibleSample,
@@ -144,7 +144,7 @@ cases.push({
     // includes the keyword set.
     const { calls, restore } = runWithFetchStub();
     try {
-      window.clearAffinityCache();
+      BP.clearAffinityCache();
       await BP.callAffinity({
         eligible: eligibleSample,
         careerKeywords: ["security"],
@@ -177,7 +177,7 @@ cases.push({
     // a constant-output call — a real $ cost.
     const { calls, restore } = runWithFetchStub();
     try {
-      window.clearAffinityCache();
+      BP.clearAffinityCache();
       const p = BP.callAffinity({
         eligible: eligibleSample,
         careerKeywords: [],

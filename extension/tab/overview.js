@@ -9,6 +9,7 @@ import * as State from "./state.js";
 import { $ } from "./state.js";
 import { renderSavedList } from "./schedule.js";
 import { renderEligibleList } from "./eligibleList.js";
+import { buildStudentProfile } from "../scheduler/profile.js";
 
 // ── panel mode (Build ↔ AI) ──────────────────────────────
 
@@ -44,7 +45,7 @@ export function applyStudentInfoToUI(student) {
   // to placeholders — they get populated later in chat turns.
   const earnedH = student.creditsEarnedMajorMinor ?? null;
   const reqH = student.creditsRequiredMajorMinor ?? null;
-  State.setStudentProfile(window.buildStudentProfile({
+  State.setStudentProfile(buildStudentProfile({
     name: student.name,
     major: student.major +
       (student.minor ? " (Minor: " + student.minor + ")" : "") +

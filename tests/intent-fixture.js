@@ -1,4 +1,4 @@
-// Intent-only golden fixture for scheduleGenerator.js v3.
+// Intent-only golden fixture for the scheduler pipeline v3.
 //
 // Runs 5 representative student prompts through callIntent() and checks
 // property assertions (not exact-match). LLM output varies across runs,
@@ -10,26 +10,10 @@
 //
 // Exit code 0 if all assertions pass, 1 if any fail.
 
-const fs = require("fs");
-const path = require("path");
+// H1 harness init — awaited below before runner starts.
+const harness = require("./unit/_harness");
 
-// Shim window so the IIFE in scheduleGenerator.js can attach globals.
-global.window = global;
-
-const src = fs.readFileSync(
-  path.join(__dirname, "..", "extension", "scheduleGenerator.js"),
-  "utf8",
-);
-// eslint-disable-next-line no-eval
-eval(src);
-
-const BP = global.BP;
-if (!BP || !BP.callIntent) {
-  console.error(
-    "Failed to load BP.callIntent — check scheduleGenerator.js IIFE",
-  );
-  process.exit(2);
-}
+let BP;
 
 const apiKey = process.env.OPENAI_API_KEY;
 if (!apiKey) {
@@ -387,6 +371,12 @@ function assertionResult(fn, intent) {
 // ------------------------------------------------------------
 
 (async () => {
+  BP = await harness.init();
+  if (!BP || !BP.callIntent) {
+    console.error("Failed to load BP.callIntent — check scheduler ESM modules");
+    process.exit(2);
+  }
+
   let totalAssertions = 0;
   let failedAssertions = 0;
   const failures = [];

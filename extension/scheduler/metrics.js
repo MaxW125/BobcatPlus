@@ -2,10 +2,8 @@
 // Extracted from scheduleGenerator.js section 9b.
 // Pure helpers exposed on BP for unit tests and trace payloads.
 // Formulas defined in docs/METRICS.md.
-//
-// Dependencies: WEIGHT_VECTORS + applyVector from solver/rank.js (imported
-// lazily via parameter to avoid a circular import from rank.js calling back
-// into metrics.js for computeArchetypeVector in _buildRankBreakdown).
+
+import { applyVector, WEIGHT_VECTORS } from "./solver/rank.js";
 
 // Accept either a top-schedule object (from rankSchedules, with .result.picks)
 // or a schedule-shaped action (with .courses[]).
@@ -81,8 +79,7 @@ export function computeArchetypeDistance(schedules) {
 // Did stated soft preferences actually move the top-1 pick?
 // Returns 1 if zeroing all soft weights would have produced a different
 // top-1 course set, 0 if they didn't matter, null if no soft prefs stated.
-// applyVector is passed in to avoid a circular import with rank.js.
-export function computePenaltyEffectiveness({ topSchedules, allScored, preferences, vectorKey = "scoreAffinity", applyVector, WEIGHT_VECTORS } = {}) {
+export function computePenaltyEffectiveness({ topSchedules, allScored, preferences, vectorKey = "scoreAffinity" } = {}) {
   if (!topSchedules?.length || !allScored?.length || !preferences) return null;
   const softKeys = ["morningCutoffWeight", "lateCutoffWeight", "avoidDayWeight", "onlineWeight", "careerAffinityWeight"];
   const anyStated = softKeys.some((k) => preferences[k] != null && preferences[k] > 0);

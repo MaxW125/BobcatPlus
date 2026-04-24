@@ -1,7 +1,7 @@
 // ============================================================
 // CALENDAR — empty-grid build, unified working-course render,
 // overlap column assignment, online-courses bar, zoom, and
-// conflict detection (delegates to BP.findOverlapPair).
+// conflict detection (findOverlapPair from scheduler/time.js).
 // ============================================================
 
 import * as State from "./state.js";
@@ -13,6 +13,7 @@ import {
   removeFromWorkingSchedule, toggleLock, updateSaveBtn,
 } from "./schedule.js";
 import { removeCalendarBlock, removeAvoidDay, renderAIToolbar } from "./ai.js";
+import { findOverlapPair } from "../scheduler/time.js";
 
 // ── time helpers ─────────────────────────────────────────
 
@@ -289,17 +290,13 @@ function escapeHtml(s) {
 // ── conflict detection ───────────────────────────────────
 
 /**
- * Delegates to BP.findOverlapPair (scheduleGenerator.js) so the solver's
- * validator and the UI status bar share one implementation. That helper
- * correctly skips entries with `online: true` even when Banner left phantom
- * meeting data on the section (Bug 5, 2026-04-21).
+ * Uses findOverlapPair from scheduler/time.js so the solver's validator and
+ * the UI status bar share one implementation. That helper correctly skips
+ * entries with `online: true` even when Banner left phantom meeting data on
+ * the section (Bug 5, 2026-04-21).
  */
 export function detectWorkingConflict() {
-  const BP = window.BP || {};
-  if (typeof BP.findOverlapPair === "function") {
-    return BP.findOverlapPair(State.workingCourses);
-  }
-  return null;
+  return findOverlapPair(State.workingCourses);
 }
 
 export function updateConflictStatus() {
