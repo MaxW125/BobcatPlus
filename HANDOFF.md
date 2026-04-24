@@ -1,11 +1,14 @@
 # Bobcat Plus — handoff
 
-> **Refactor (2026-04-23).** Branch `refactor-on-main`: ES module service worker + tab split
-> is **code-complete** through commit `998e63f` (`extension/tab/`* per Deviation B). Doc
-> restructure landed in `bad7af0` + a follow-up pass that introduced `docs/bugs/`,
-> `docs/plans/`, `docs/postmortems/`, `docs/process.md`, a Jira-pointing `open-bugs.md`,
-> and trimmed `decisions.md` to architecture-only ADRs. **No runtime behavior changes**
-> in the doc passes. Retrospective: `[docs/postmortems/refactor-on-main-split.md](docs/postmortems/refactor-on-main-split.md)`.
+> **Status (2026-04-23).** `refactor-on-main` **merged to `main`** in `7e51ebb` (PR #8). Service
+> worker is ESM, tab is split into `tab/*`, doc restructure shipped. Retrospective:
+> [`docs/postmortems/refactor-on-main-split.md`](docs/postmortems/refactor-on-main-split.md).
+>
+> **Next active stream: scheduler refactor.** Split `extension/scheduleGenerator.js` into
+> `extension/scheduler/*` and flip the tab runtime from classic-script + `window.BP` to
+> ES modules. Plan: [`docs/plans/scheduler-refactor.md`](docs/plans/scheduler-refactor.md).
+> Jira: [**SCRUM-34**](https://aidanavickers.atlassian.net/browse/SCRUM-34) (epic) →
+> SCRUM-38..44 (C1–C7). Branch: `scheduler-refactor`.
 
 Read `[CLAUDE.md](CLAUDE.md)` first (router), then `[docs/decisions.md](docs/decisions.md)` before
 changing load-bearing behavior. If HANDOFF and decisions disagree, **decisions wins**
@@ -47,13 +50,13 @@ Authoritative table: `[docs/open-bugs.md](docs/open-bugs.md)` (includes Bug 7, 4
 | ----------- | ------------------------------------ | ------------------------------------- |
 | 0           | Instrument pipeline                  | ✅                                     |
 | 1           | RequirementGraph + TXST adapter      | ✅ (D17: flags removed)                |
-| 1.5         | Solver + graph (ChooseN / AllOf / …) | ⬜                                     |
+| 1.5         | Solver + graph (ChooseN / AllOf / …) | ⬜ [SCRUM-35](https://aidanavickers.atlassian.net/browse/SCRUM-35) — gated behind refactor |
 | 2-precursor | Bug 1/3 solver + calibrator          | ✅ `5975c90`                           |
 | 2           | Scorer fidelity                      | ⬜                                     |
 | 2.5         | Prereq-in-term in solver             | ⬜                                     |
 | 3           | Archetype-seeded ranking             | ⬜                                     |
 | 4a–5        | Advising + planner                   | ⬜ — see `docs/plans/advising-flow.md` |
-| X           | Bug 4 rollup                         | 🟡 A/B/C shipped; live verify pending |
+| X           | Bug 4 rollup                         | 🟡 A/B/C shipped; live verify [SCRUM-36](https://aidanavickers.atlassian.net/browse/SCRUM-36) |
 | Y           | A1+B perf                            | ✅ `e687ad6`                           |
 
 
@@ -64,12 +67,20 @@ duplicate the big table here.
 
 ## Next action
 
-1. **Merge or PR** `refactor-on-main` → `main` when you are ready — if `gh pr view` shows no PR,
-  create one (`gh pr create`). Auto: fresh chat, green `node tests/unit/run.js`, Chrome smoke on
-  auth → term → eligible → AI → lock/save if anything non-doc touched).
-2. **Bug 7** — registration restrictions (Opus/API) — file `docs/bugs/bug7-registration-restrictions.md` first.
-3. **Bug 4 live verify** after merge — CS BS / English-CW ≥50 eligible.
-4. **Phase 1.5** only after Bug 7 + calendar-first-load are understood or filed.
+1. **Scheduler refactor** — branch `scheduler-refactor`, epic [SCRUM-34](https://aidanavickers.atlassian.net/browse/SCRUM-34).
+  Start fresh chat on C1 (test pin, Auto). Plan: [`docs/plans/scheduler-refactor.md`](docs/plans/scheduler-refactor.md).
+  Per-commit model routing + new-chat boundaries in the plan's commit-chain table. 7 commits C1–C7
+  (SCRUM-38 through SCRUM-44). Do this before anything else that touches the LLM pipeline.
+2. **Audit-fixture collection (Max, runs in parallel to refactor)** — 3–5 more real DegreeWorks audits
+  as `tests/fixtures/audits/audit-{major}-{name}.json`. Feeds Phase 1.5. Does not collide with the
+  refactor's files. See [SCRUM-35](https://aidanavickers.atlassian.net/browse/SCRUM-35).
+3. **Bug 4 live-verify** — piggyback on the first Chrome smoke after C2/C5/C6: confirm eligible list
+  ≥ 50 on a real CS BS / English-CW audit. [SCRUM-36](https://aidanavickers.atlassian.net/browse/SCRUM-36).
+4. **Bug 7** (registration restrictions) — file `docs/bugs/bug7-registration-restrictions.md` first.
+  Premium turn, Opus/API. **Gate behind the scheduler refactor landing** so Bug 7 doesn't edit
+  files that are about to move.
+5. **Phase 1.5** — [SCRUM-35](https://aidanavickers.atlassian.net/browse/SCRUM-35). Only after the
+  scheduler refactor lands on `main` (same-file conflicts). RFC is [`docs/plans/requirement-graph.md`](docs/plans/requirement-graph.md).
 
 For session boot: `cd` to repo root, `git branch --show-current`, then read
 `CLAUDE.md` + this file + the diagnosis doc for the line of work.
