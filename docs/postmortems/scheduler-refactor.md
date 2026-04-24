@@ -1,10 +1,19 @@
-# Plan — `scheduleGenerator.js` refactor
+# Postmortem — `scheduleGenerator.js` refactor
 
-**Status.** 🟢 **Approved plan — ready to execute on branch `scheduler-refactor`.**
-All five open questions resolved in a GSE + AIE + UXE review meeting
-(see "Resolutions" section at the bottom). When the refactor merges, this
-file gets copied to `docs/postmortems/scheduler-refactor.md` with actual
-SHAs filled in.
+**Status.** ✅ **Complete.** Branch `scheduler-refactor` ready to merge. Smoke passed after C6.
+
+**Commit SHAs:**
+
+| Commit | SHA |
+| ------ | --- |
+| C0 — plan + Jira wiring | `9f8ed13` |
+| C1 — RAG-seam pin | `192c025` |
+| C2 — pure-leaves bundle | `64ac0e2` |
+| C3 — solver bundle | `083dfff` |
+| C4 — LLM infra + intent | `b55a5d2` |
+| C5 — LLM stages + orchestrator | `bcba18b` |
+| C6 — ESM flip | `bfaf886` |
+| C7 — docs + package.json | *(this commit)* |
 
 **Named in.** `docs/postmortems/refactor-on-main-split.md` ("next refactor
 after this one: `extension/scheduleGenerator.js` — its own RFC under

@@ -942,3 +942,35 @@ then adds the new semantics under a feature flag.
 
 **Reversible by.** If Phase 1.5 slips past 6 weeks, we consider splitting
 it further (ChooseN-only first, many-to-many later).
+---
+
+## 2026-04-23 — D25: ESM flip — `window.BP` removal, `scheduleGenerator.js` deletion, H1 harness, `package.json`
+
+**Context.** `extension/scheduleGenerator.js` (2098 lines, IIFE, `window.BP` globals) was the
+last monolith in the repo after the `refactor-on-main` bg/tab split. The scheduler refactor
+(C1–C7, branch `scheduler-refactor`, Jira SCRUM-34) extracted it into 15 ESM modules under
+`extension/scheduler/`. C6 completed the atomic ESM flip.
+
+**Decisions made in this refactor:**
+
+1. **`window.BP` surface deleted entirely** (Deviation S). Unlike the bg refactor which kept
+   `self.BPReq` / `self.BPPerf` as side-effect globals (D20), the scheduler is consumed only
+   from the tab runtime and Node tests — both of which have clean import access. Global aliases
+   revive the wrong habit; named imports are the right habit. Any regression gets a missing-import
+   error, not silent undefined.
+
+2. **Classic script → ESM, tab-only** (`extension/scheduler/` is not cross-environment). The bg
+   modules (`requirements/*`, `performance/*`) are cross-environment and stay global-attach.
+   `scheduler/*` is tab-only; native `import` is the right primitive.
+
+3. **H1 test harness** (dynamic `import()` in CJS `_harness.js`). H2 (full ESM test suite) would
+   touch ~10 test files in what is supposed to be pure code motion. H1 isolates the ESM boundary
+   to `_harness.js`. Follow-up ticket for H2 filed; H1's "temporary" must not become permanent.
+
+4. **`package.json` added** (minimal, 5 fields, no scripts, no lockfile). `type: "commonjs"`
+   documents H1's resolver contract; `engines.node` pins the silent Node ≥ 18 assumption;
+   `private: true` prevents accidental publish. Adding scripts / deps is scope creep — separate PR.
+
+**Reversible by.** `git revert` the C6 + C7 merge commits together. C5 back-compat shim was
+never created (the classic-script constraint made it impossible); reverting C6 requires manually
+re-adding the `scheduleGenerator.js` IIFE from `git show bfaf886^:extension/scheduleGenerator.js`.

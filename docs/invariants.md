@@ -40,9 +40,10 @@ load. Unbounded `Promise.all` + raw `fetch` **reproduced a ~4 minute** eligible-
 
 ---
 
-## 4. Affinity cache wipe (`scheduleGenerator.js`)
+## 4. Affinity cache wipe (`scheduler/llm/affinity.js` + `scheduler/index.js`)
 
-`affinityCache` must be cleared at the start of `handleUserTurn`. Without it,
+`affinityCache` (module-local Map in `affinity.js`) must be cleared via
+`clearAffinityCache()` as the first statement in `handleUserTurn`. Without it,
 prior-turn career keywords bias the next turn.
 
 **Test:** `tests/unit/affinityCache.test.js`.
@@ -86,5 +87,8 @@ semantics.
 | `bg/bannerApi.js` + `bg/prereqs.js` + `runAnalysis` pool | Reverting pool/timeout → long hangs; cache key `subjectSearch\|v2\|` must match semantics |
 | `extension/background.js` | Post-import `self.BPReq` / `self.BPPerf` assertions — do not weaken to `console.warn` |
 | `tab/schedule.js` | `addToWorkingSchedule` lock/CRN rules |
-| `scheduleGenerator.js` | Affinity wipe, Jaccard dedup, `validateSchedule` |
+| `scheduler/llm/affinity.js` | Affinity cache — module-local Map; `clearAffinityCache()` called at top of every `handleUserTurn` |
+| `scheduler/solver/rank.js` | Tiered Jaccard dedup in `pickTop3`; `WEIGHT_VECTORS` |
+| `scheduler/validate.js` | `validateSchedule` defense-in-depth gate |
+| `scheduler/index.js` | `handleUserTurn` orchestrator — affinity wipe call site |
 | `tab/auth.js` | `registrationFetchQueue` singleton; SAML `/saml/login` entry (D19) |

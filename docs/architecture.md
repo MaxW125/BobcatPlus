@@ -7,7 +7,7 @@ execution contexts** that must not import each other’s code:
 | Context        | Entry                        | Network role                                                                                                                                                |
 | -------------- | ---------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Service worker | `extension/background.js`    | DegreeWorks API, Banner SSB, `chrome.storage.local` (via `bg/cache.js`).                                                                                    |
-| Tab page       | `extension/tab.js` → `tab/`* | UI; **OpenAI** Chat Completions for the v3 pipeline (`extension/scheduleGenerator.js`, user-supplied key); `chrome.runtime.sendMessage` to the worker only. |
+| Tab page       | `extension/tab.js` → `tab/`* | UI; **OpenAI** Chat Completions for the v3 pipeline (`extension/scheduler/`*, user-supplied key); `chrome.runtime.sendMessage` to the worker only. |
 
 
 **Hard rule:** never import `tab/`* from `background.js` or vice versa. The
@@ -59,7 +59,7 @@ is fallback only — see `docs/decisions.md` D17).
 
 ## AI scheduler (v3 hybrid)
 
-One entry point: `window.BP.handleUserTurn(...)` in `extension/scheduleGenerator.js`.
+One entry point: `handleUserTurn(...)` in `extension/scheduler/index.js` (imported directly by `tab/ai.js`).
 
 1. **Intent LLM** — `callIntent()`; frozen IntentSchema v1.
 2. **Calibrator** — `calibrateIntentWeights()`; hedges / hard phrasing near weight fields.
@@ -121,7 +121,7 @@ solver). Invariants: `[invariants.md](invariants.md)`.
 | ------------------- | ------------------------------------------------------------------------------------------------ | ----------------------- |
 | DegreeWorks         | `https://dw-prod.ec.txstate.edu/responsiveDashboard/api`                                         | TXST session cookie     |
 | Banner registration | `https://reg-prod.ec.txstate.edu/StudentRegistrationSsb/ssb`                                     | TXST session cookie     |
-| OpenAI              | `https://api.openai.com/v1/chat/completions` (called from `scheduleGenerator.js` in the **tab**) | API key in page context |
+| OpenAI              | `https://api.openai.com/v1/chat/completions` (called from `scheduler/llm/openai.js` in the **tab**) | API key in page context |
 | Rate My Professor   | GraphQL (via `facultyScraper.js`)                                                                | None (public)           |
 
 
