@@ -1,0 +1,7 @@
+{
+  "name": "bobcat-plus",
+  "description": "Bobcat Plus Chrome extension",
+  "private": true,
+  "type": "commonjs",
+  "engines": { "node": ">=18" }
+}
