@@ -20,5 +20,10 @@
   "action": {
     "default_popup": "popup.html",
     "default_title": "TXST Registration Helper"
+  },
+  "icons": {
+    "16": "images/txst-star-gold.png",
+    "48": "images/txst-star-gold.png",
+    "128": "images/txst-star-gold.png"
   }
 }
