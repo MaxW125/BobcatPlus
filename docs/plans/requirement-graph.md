@@ -268,7 +268,7 @@ sibling courses at a time".
   and `creditsBegin` are present, does "OR" mean either threshold satisfies? Working
    assumption: yes, OR → min(classes, credits-equivalent) counts. Confirm via the
    CS BS audit where engineering-style credit-hour rules are common.
-3. `**ifElsePart: "IfPart" | "ElsePart"*`* — conditional rule branches. Rare in this
+3. `**ifElsePart: "IfPart" | "ElsePart"`** — conditional rule branches. Rare in this
   audit. Likely tied to transfer credit / test credit / catalog-year switches. Need a
    second audit to see a real example before designing.
 4. **Attribute resolution without catalog attributes.** If the concrete fallback courses

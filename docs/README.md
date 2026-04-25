@@ -17,7 +17,7 @@ in chat.
 | ------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------- |
 | `[architecture.md](architecture.md)` | Two JS contexts, eligible + v3 AI pipelines, external systems, cache contract, v3 diagram.                                   |
 | `[invariants.md](invariants.md)`     | Non-negotiables (session mutex, `bail()`, pool+timeout, affinity wipe, Jaccard, `validateSchedule`, `addToWorkingSchedule`). |
-| `[file-map.md](file-map.md)`         | `bg/*`, `tab/*`, entrypoints, pure `requirements/*` + `performance/*` — *where* to edit.                                     |
+| `[file-map.md](file-map.md)`         | `bg/`*, `tab/*`, entrypoints, pure `requirements/*` + `performance/*` — *where* to edit.                                     |
 | `[METRICS.md](METRICS.md)`           | Phase-0 metric formulas (`honoredRate`, `archetypeDistance`, etc).                                                           |
 | `[open-bugs.md](open-bugs.md)`       | Pointer into Jira + in-repo bug diagnoses.                                                                                   |
 
@@ -39,10 +39,12 @@ in chat.
 ## Plans (future / in-progress design)
 
 
-| Doc                                                        | Role                                                                    |
-| ---------------------------------------------------------- | ----------------------------------------------------------------------- |
-| `[plans/requirement-graph.md](plans/requirement-graph.md)` | `RequirementGraph` parser (Phase 1 shipped) + Phase 1.5 open questions. |
-| `[plans/advising-flow.md](plans/advising-flow.md)`         | Phases 4a / 4b / 5 product shape (advisor brief, multi-term planner).   |
+| Doc                                                                    | Role                                                                                              |
+| ---------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| `[plans/requirement-graph.md](plans/requirement-graph.md)`             | `RequirementGraph` parser (Phase 1 shipped) + Phase 1.5 open questions.                           |
+| `[plans/advising-flow.md](plans/advising-flow.md)`                     | Phases 4a / 4b / 5 product shape (advisor brief, multi-term planner).                             |
+| `[plans/rule-shape-discovery.md](plans/rule-shape-discovery.md)`       | Phase 1.6 — how to get ~800 what-if audits for rule-shape inventory (S0–S6 plan).                 |
+| `[plans/whatif-endpoint.md](plans/whatif-endpoint.md)`                 | DW What-If endpoint reverse-engineering notes (T3 / S2). Gate doc for pull-audits.js driver (S3). |
 
 
 ---

@@ -3,8 +3,8 @@
 > **Status (2026-04-23).** Scheduler refactor **complete on `scheduler-refactor`** (C1–C7,
 > SCRUM-38–44). `extension/scheduleGenerator.js` deleted; all pipeline logic now lives in
 > `extension/scheduler/*` (15 ESM modules). `tab/*` import directly — no `window.BP` globals.
-> Postmortem: [`docs/postmortems/scheduler-refactor.md`](docs/postmortems/scheduler-refactor.md).
-> Jira: [**SCRUM-34**](https://aidanavickers.atlassian.net/browse/SCRUM-34).
+> Postmortem: `[docs/postmortems/scheduler-refactor.md](docs/postmortems/scheduler-refactor.md)`.
+> Jira: **[SCRUM-34](https://aidanavickers.atlassian.net/browse/SCRUM-34)**.
 >
 > **Ready to merge `scheduler-refactor` → `main`.** Smoke passed (C6). C7 is the doc pass
 > (this commit). After merge: open Phase 1.5 (SCRUM-35) and Bug 7 work.
@@ -23,7 +23,7 @@ Depth: `[docs/architecture.md](docs/architecture.md)`, `[docs/open-bugs.md](docs
 
 - **Contexts, eligible + v3 pipelines, APIs, cache, full ASCII diagram:** `[docs/architecture.md](docs/architecture.md)`  
 - **Non-negotiables (mutex, `bail`, pool, affinity, Jaccard, etc.):** `[docs/invariants.md](docs/invariants.md)`  
-- **Implementation detail:** `extension/scheduler/index.js` (entry point) + `scheduler/*` modules
+- **Implementation detail:** `extension/scheduler/index.js` (entry point) + `scheduler/`* modules
 
 **One-screen summary**
 
@@ -45,18 +45,18 @@ Authoritative table: `[docs/open-bugs.md](docs/open-bugs.md)` (includes Bug 7, 4
 ## Phase progress (as of 2026-04-23)
 
 
-| Phase       | Goal                                 | Status                                |
-| ----------- | ------------------------------------ | ------------------------------------- |
-| 0           | Instrument pipeline                  | ✅                                     |
-| 1           | RequirementGraph + TXST adapter      | ✅ (D17: flags removed)                |
-| 1.5         | Solver + graph (ChooseN / AllOf / …) | ⬜ [SCRUM-35](https://aidanavickers.atlassian.net/browse/SCRUM-35) — gated behind refactor |
-| 2-precursor | Bug 1/3 solver + calibrator          | ✅ `5975c90`                           |
-| 2           | Scorer fidelity                      | ⬜                                     |
-| 2.5         | Prereq-in-term in solver             | ⬜                                     |
-| 3           | Archetype-seeded ranking             | ⬜                                     |
-| 4a–5        | Advising + planner                   | ⬜ — see `docs/plans/advising-flow.md` |
+| Phase       | Goal                                 | Status                                                                                        |
+| ----------- | ------------------------------------ | --------------------------------------------------------------------------------------------- |
+| 0           | Instrument pipeline                  | ✅                                                                                             |
+| 1           | RequirementGraph + TXST adapter      | ✅ (D17: flags removed)                                                                        |
+| 1.5         | Solver + graph (ChooseN / AllOf / …) | ⬜ [SCRUM-35](https://aidanavickers.atlassian.net/browse/SCRUM-35) — gated behind refactor     |
+| 2-precursor | Bug 1/3 solver + calibrator          | ✅ `5975c90`                                                                                   |
+| 2           | Scorer fidelity                      | ⬜                                                                                             |
+| 2.5         | Prereq-in-term in solver             | ⬜                                                                                             |
+| 3           | Archetype-seeded ranking             | ⬜                                                                                             |
+| 4a–5        | Advising + planner                   | ⬜ — see `docs/plans/advising-flow.md`                                                         |
 | X           | Bug 4 rollup                         | 🟡 A/B/C shipped; live verify [SCRUM-36](https://aidanavickers.atlassian.net/browse/SCRUM-36) |
-| Y           | A1+B perf                            | ✅ `e687ad6`                           |
+| Y           | A1+B perf                            | ✅ `e687ad6`                                                                                   |
 
 
 Fixture deltas vs legacy `findNeeded` remain in earlier commits / RFCs; do not
@@ -68,7 +68,7 @@ duplicate the big table here.
 
 1. **Merge `scheduler-refactor` → `main`** — C7 smoke + PR, then merge. Unblocks everything below.
 2. **Phase 1.5** — [SCRUM-35](https://aidanavickers.atlassian.net/browse/SCRUM-35). Graph-native solver
-  (ChooseN / AllOf / …). RFC: [`docs/plans/requirement-graph.md`](docs/plans/requirement-graph.md).
+  (ChooseN / AllOf / …). RFC: `[docs/plans/requirement-graph.md](docs/plans/requirement-graph.md)`.
   Requires more audit fixtures — see item 3.
 3. **Audit-fixture collection (Max)** — 3–5 more real DegreeWorks audits as
   `tests/fixtures/audits/audit-{major}-{name}.json`. Feeds Phase 1.5.
@@ -87,7 +87,7 @@ For session boot: `cd` to repo root, `git branch --show-current`, then read
 
 ## Recent commit history (abbrev.)
 
-**`scheduler-refactor` — C1–C7**
+`**scheduler-refactor` — C1–C7**
 
 - `bfaf886` — C6: ESM flip — delete scheduleGenerator.js, H1 harness, named imports
 - `bcba18b` — C5: affinity, rationale, advisor LLMs + orchestrator + fixture
@@ -97,7 +97,7 @@ For session boot: `cd` to repo root, `git branch --show-current`, then read
 - `192c025` — C1: RAG-seam signature pin (llmSignatures.test.js)
 - `9f8ed13` — C0: scheduler-refactor plan + Jira wiring
 
-**`main` (post-`7e51ebb` merge)** — see `git log main` for full history.
+`**main` (post-`7e51ebb` merge)** — see `git log main` for full history.
 
 **Deferred Refactor-only fixes** recorded as `docs/bugs/bug9-plans-empty-after-term-switch.md`
 and `docs/bugs/bug10-session-expired-status-bar.md`; see D24 in
