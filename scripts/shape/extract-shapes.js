@@ -24,8 +24,8 @@ const OUT_MD        = path.join(__dirname, '../../docs/plans/rule-shape-inventor
 // Derived from extension/requirements/txstFromAudit.js (inferBlockType +
 // convertRule switch).  Update here when the parser is extended (S5).
 
-const HANDLED_REQ_TYPES = new Set(['DEGREE', 'MAJOR', 'MINOR', 'CORE', 'OTHER']);
-// CONC/CERT/SPEC/TRACK/HONORS all fall through to BLOCK_TYPE.OTHER in inferBlockType.
+const HANDLED_REQ_TYPES = new Set(['DEGREE', 'MAJOR', 'MINOR', 'CONC', 'CORE', 'OTHER']);
+// CERT/SPEC/TRACK/HONORS not yet seen in any fixture; fall through to BLOCK_TYPE.OTHER.
 
 const HANDLED_RULE_TYPES = new Set([
   'Block', 'Blocktype', 'Subset', 'Group',

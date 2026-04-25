@@ -12,7 +12,7 @@ Parser column: ✅ = handled by current `txstFromAudit.js`; ⚠️ = falls throu
 | `OTHER` | 83 | 100% | 275 | ✅ |
 | `DEGREE` | 83 | 100% | 83 | ✅ |
 | `MAJOR` | 80 | 96% | 80 | ✅ |
-| `CONC` | 9 | 11% | 9 | ⚠️ unhandled |
+| `CONC` | 9 | 11% | 9 | ✅ |
 | `MINOR` | 3 | 4% | 3 | ✅ |
 
 ## Rule `ruleType`
@@ -94,4 +94,4 @@ Presence counts — how many audits contain at least one instance.
 
 Shapes seen in fixtures that fall through to the `default` branch or `BLOCK_TYPE.OTHER`:
 
-**requirementType** (falls to `BLOCK_TYPE.OTHER`): `CONC`
+_All shapes in current fixtures are handled. Run against full what-if dump for a complete picture._

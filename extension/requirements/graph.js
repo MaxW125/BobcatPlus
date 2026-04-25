@@ -36,6 +36,7 @@
     DEGREE: "DEGREE",
     MAJOR:  "MAJOR",
     MINOR:  "MINOR",
+    CONC:   "CONC",
     CORE:   "CORE",
     OTHER:  "OTHER",
   });
