@@ -18,7 +18,8 @@ separate isolates. All cross-context work is message-based.
 `extension/bg/`* (service worker) and `extension/tab/`* (page). Entry files
 stay thin: `background.js` (~~224 lines) is the `onMessage` router + analysis
 generation counter; `tab.js` (~~212 lines) boots the page and handles term
-change. See `[file-map.md](file-map.md)`.
+change. Browse `extension/` directly for module layout — every module has a
+top-of-file comment explaining its role.
 
 ---
 

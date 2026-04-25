@@ -48,4 +48,4 @@ on **any** falsy response without passing through the error object from
 - `extension/tab/auth.js` — `checkAuth`, `loadSchedule`  
 - `extension/tab/overview.js` — `applyStudentInfoToUI`  
 - `docs/postmortems/bug8-banner-half-auth-login-popup.md` (closed — login *entry* UX)  
-- `docs/bugs/bug6-import-ux.md` (related import flow)
+- `docs/bugs/scrum-79-import-ux.md` (related import flow)
