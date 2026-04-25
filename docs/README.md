@@ -1,86 +1,99 @@
 # Bobcat Plus — documentation index
 
-Read order is **load smallest context first**. Deeper content lives in
-linked files; do not duplicate long tables in chat or in this index.
+**Read order (humans and LLMs):** load the smallest context first, then branch
+by task. Deeper content lives in linked files — do not duplicate long tables
+in chat.
 
-## Load priority
-
-| Tier | Always read | When |
-| --- | --- | --- |
-| **T1** | [`../CLAUDE.md`](../CLAUDE.md), [`../compass.md`](../compass.md), [`decisions.md`](decisions.md) (active) | Every session. |
-| **T2** | [`architecture.md`](architecture.md), [`invariants.md`](invariants.md), the relevant [`plans/*`](plans/) | When working in the phase those docs describe. |
-| **T3** | [`postmortems/`](postmortems/), [`decisions-archive.md`](decisions-archive.md) | Only when you need historical context. |
-
-If anything below contradicts [`decisions.md`](decisions.md), decisions
-wins.
+1. `[../CLAUDE.md](../CLAUDE.md)` — router: contexts, where to read next, rules, session hygiene.
+2. `[../HANDOFF.md](../HANDOFF.md)` — what's next, phases, short commit pointers.
+3. `[decisions.md](decisions.md)` — **tiebreaker** ADR log (architecture/product only); if any doc disagrees, this wins.
 
 ---
 
-## Core reference
+## Core reference (refactored `extension/`)
 
-| Doc | One-line role |
-| --- | --- |
-| [`architecture.md`](architecture.md) | Two JS contexts, eligible + v3 AI pipelines, external systems, cache contract, v3 diagram. |
-| [`invariants.md`](invariants.md) | Non-negotiables (session mutex, `bail()`, pool+timeout, affinity wipe, Jaccard, `validateSchedule`, `addToWorkingSchedule`). |
-| [`METRICS.md`](METRICS.md) | Phase-0 metric formulas (`honoredRate`, `archetypeDistance`, etc). |
-| [`open-bugs.md`](open-bugs.md) | Pointer into Jira + in-repo bug diagnoses. |
 
-## Decisions
+| Doc                                  | One-line role                                                                                                                |
+| ------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------- |
+| `[architecture.md](architecture.md)` | Two JS contexts, eligible + v3 AI pipelines, external systems, cache contract, v3 diagram.                                   |
+| `[invariants.md](invariants.md)`     | Non-negotiables (session mutex, `bail()`, pool+timeout, affinity wipe, Jaccard, `validateSchedule`, `addToWorkingSchedule`). |
+| `[file-map.md](file-map.md)`         | `bg/*`, `tab/*`, entrypoints, pure `requirements/*` + `performance/*` — *where* to edit.                                     |
+| `[METRICS.md](METRICS.md)`           | Phase-0 metric formulas (`honoredRate`, `archetypeDistance`, etc).                                                           |
+| `[open-bugs.md](open-bugs.md)`       | Pointer into Jira + in-repo bug diagnoses.                                                                                   |
 
-| Doc | Role |
-| --- | --- |
-| [`decisions.md`](decisions.md) | Append-only ADRs (architecture/product). Active entries (D17 onward). |
-| [`decisions-archive.md`](decisions-archive.md) | Older ADRs (D2–D14). Read only when you need history. |
-| [`CONTRIBUTING.md`](CONTRIBUTING.md) | How to add docs. New markdown must be indexed here or in `CLAUDE.md`. |
 
-## Phase plans
+---
 
-| Phase | Theme | Plan |
-| --- | --- | --- |
-| 1.5 | Graph-native solver — many-to-many, ChooseN/AllOf | [`plans/requirement-graph.md`](plans/requirement-graph.md) |
-| 4 | Advising flow | [`plans/advising-flow.md`](plans/advising-flow.md) |
+## Decisions and process
 
-Phases 5 (graduation tracker) and 6+ (tree-style requirement
-visualization) are tracked in [`../compass.md`](../compass.md) and Jira;
-no plan doc yet.
 
-## Open bug diagnoses ([`bugs/`](bugs/))
+| Doc                                  | Role                                                                                      |
+| ------------------------------------ | ----------------------------------------------------------------------------------------- |
+| `[decisions.md](decisions.md)`       | Append-only ADRs (architecture/product). Never split a decision into a new file.          |
+| `[process.md](process.md)`           | Meta-process rules (plan-doc workflow, gates, model routing). Extracted from the ADR log. |
+| `[CONTRIBUTING.md](CONTRIBUTING.md)` | How to add docs; new markdown must be indexed here or in `CLAUDE.md`.                     |
 
-| Doc | Status |
-| --- | --- |
-| [`bugs/scrum-63-eligible.md`](bugs/scrum-63-eligible.md) | A/B/C shipped; live-verify pending |
-| [`bugs/scrum-79-import-ux.md`](bugs/scrum-79-import-ux.md) | Deferred |
-| [`bugs/scrum-47-plans-empty.md`](bugs/scrum-47-plans-empty.md) | Open |
-| [`bugs/scrum-80-session-expired-status-bar.md`](bugs/scrum-80-session-expired-status-bar.md) | Open |
 
-## Postmortems ([`postmortems/`](postmortems/))
+---
 
-Historical record. Don't edit — append a one-line correction only if a
-claim turned out to be wrong.
+## Plans (future / in-progress design)
 
-| Doc | Notes |
-| --- | --- |
-| [`postmortems/scheduler-refactor.md`](postmortems/scheduler-refactor.md) | `scheduleGenerator.js` → `scheduler/*` split (D25). |
-| [`postmortems/refactor-on-main-split.md`](postmortems/refactor-on-main-split.md) | ES module split of `background.js` + `tab.js`. |
-| [`postmortems/bug1-morning-preference.md`](postmortems/bug1-morning-preference.md) | Shipped `5975c90` (D14). |
-| [`postmortems/bug5-online-conflict.md`](postmortems/bug5-online-conflict.md) | Shipped `fda436e` (D12). |
-| [`postmortems/bug8-banner-half-auth-login-popup.md`](postmortems/bug8-banner-half-auth-login-popup.md) | Shipped with D19. |
-| [`postmortems/bug11-post-saml-degreeworks-warmup.md`](postmortems/bug11-post-saml-degreeworks-warmup.md) | D22 + D23. |
+
+| Doc                                                        | Role                                                                    |
+| ---------------------------------------------------------- | ----------------------------------------------------------------------- |
+| `[plans/requirement-graph.md](plans/requirement-graph.md)` | `RequirementGraph` parser (Phase 1 shipped) + Phase 1.5 open questions. |
+| `[plans/advising-flow.md](plans/advising-flow.md)`         | Phases 4a / 4b / 5 product shape (advisor brief, multi-term planner).   |
+
+
+---
+
+## Open bug diagnoses (`[bugs/](bugs/)`)
+
+In-repo diagnoses only exist when a bug has a non-obvious failure mode.
+Status, priority, and triage live in Jira.
+
+
+| Doc                                                                                        | Status                                |
+| ------------------------------------------------------------------------------------------ | ------------------------------------- |
+| `[bugs/bug4-eligible.md](bugs/bug4-eligible.md)`                                           | 🟡 A/B/C shipped; live-verify pending |
+| `[bugs/bug6-import-ux.md](bugs/bug6-import-ux.md)`                                         | 🟡 Deferred                           |
+| `[bugs/bug9-plans-empty-after-term-switch.md](bugs/bug9-plans-empty-after-term-switch.md)` | 🟡 Open                               |
+| `[bugs/bug10-session-expired-status-bar.md](bugs/bug10-session-expired-status-bar.md)`     | 🟡 Open                               |
+
+
+---
+
+## Postmortems (`[postmortems/](postmortems/)`)
+
+Historical record of closed issues and completed refactors. Do not edit —
+append a one-line correction only if a claim turned out to be wrong.
+
+
+| Doc                                                                                                      | Notes                                                         |
+| -------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
+| `[postmortems/refactor-on-main-split.md](postmortems/refactor-on-main-split.md)`                         | ES module split of `background.js` + `tab.js` (9/9 complete). |
+| `[postmortems/bug1-morning-preference.md](postmortems/bug1-morning-preference.md)`                       | Shipped `5975c90` (D14).                                      |
+| `[postmortems/bug5-online-conflict.md](postmortems/bug5-online-conflict.md)`                             | Shipped `fda436e` (D12).                                      |
+| `[postmortems/bug8-banner-half-auth-login-popup.md](postmortems/bug8-banner-half-auth-login-popup.md)`   | Shipped with D19.                                             |
+| `[postmortems/bug11-post-saml-degreeworks-warmup.md](postmortems/bug11-post-saml-degreeworks-warmup.md)` | D22 + D23.                                                    |
+
+
+---
 
 ## Baselines
 
-| Path | Role |
-| --- | --- |
-| [`baselines/phase1-2026-04-21.json`](baselines/phase1-2026-04-21.json) | Phase-1 adapter snapshot; regen via `scripts/generate-phase1-baseline.js` when the parser/adapter changes. |
+
+| Path                                                                   | Role                                                                                                       |
+| ---------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| `[baselines/phase1-2026-04-21.json](baselines/phase1-2026-04-21.json)` | Phase-1 adapter snapshot; regen via `scripts/generate-phase1-baseline.js` when the parser/adapter changes. |
+
 
 ---
 
 ## Intentionally not duplicated here
 
 - **Per-module "what the code does"** — top-of-file comments in
-  `extension/` (e.g. `requirements/wildcardExpansion.js`,
-  `performance/concurrencyPool.js`, `bg/analysis.js`, `tab/auth.js`).
-- **Commit narratives** — git history; use [`decisions.md`](decisions.md)
-  for durable *why*.
-- **Live bug triage** — Jira; [`open-bugs.md`](open-bugs.md) is a pointer.
-- **Pattern-pinned coding rules for AI agents** — `.cursor/rules/` (auto-loaded).
+`extension/`** (e.g. `requirements/wildcardExpansion.js`,
+`performance/concurrencyPool.js`, `bg/analysis.js`, `tab/auth.js`).
+- **Commit narratives** — git history; use `decisions.md` for durable *why*.
+- **Live bug triage** — Jira; `open-bugs.md` is a pointer.
