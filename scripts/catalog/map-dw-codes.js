@@ -33,6 +33,52 @@ const MANIFEST    = path.join(__dirname, 'degree-combinations.json');
 const DW_BASE     = 'https://dw-prod.ec.txstate.edu/responsiveDashboard';
 const RATE_MS     = 1000;
 
+// Manual overrides for majors: "${majorSlug}|${degree}" → dwMajorCode.
+// Used when neither slug-based nor title-based description matching resolves a program.
+// Reasons: DW uses a different short name, catalog slug includes dept context, or DW
+// groups catalog sub-tracks under one parent major code.
+const MAJOR_OVERRIDES = {
+  // Theatre / BFA acting — DW uses short name "Acting" (key: ACT)
+  'acting-stage-screen|BFA':            'ACT',
+  // Geography family — catalog splits into sub-programs, DW groups under GEO
+  'geographic-information-science|BS':  'GEO',
+  'geography-environmental-studies-accelerated-online-program|BS': 'GEO',
+  'resource-environmental-studies-climate-dynamics-society|BS':    'GEO',
+  'resource-environmental-studies-environmental-management|BS':    'GEO',
+  'resource-environmental-studies-natural-resources-conservation|BS': 'GEO',
+  'resource-environmental-studies-water-resources|BS':             'GEO',
+  'resource-environmental-studies|BS':  'GEO',
+  'urban-regional-planning|BS':         'GEO',
+  'water-resources|BS':                 'GEO',
+  'physical|BS':                        'GEO',  // Physical Geography
+  // Journalism — DW uses "Mass Communications" (key: MC)
+  'journalism|BS':                      'MC',
+  'journalism-mass-communication|BS':   'MC',
+  // Recreation and Sport Management — DW key: RESM
+  'recreation-studies-community-recreation|BS':   'RESM',
+  'recreation-studies-outdoor-recreation|BS':     'RESM',
+  'recreation-studies-therapeutic-recreation|BS': 'RESM',
+};
+
+// Manual overrides: "${dwMajorCode}|${concSlug}" → dwConcCode.
+// DW concentration descriptions are short keys that don't match catalog slug fragments,
+// so the description-based matcher cannot resolve these automatically.
+const CONC_OVERRIDES = {
+  // Sports Media concentration shared across all mass-comm majors (DW code: SPOR)
+  'AD|advertising-mass-communication-sports-media':            'SPOR',
+  'DMI|digital-mass-communication-sports-media':               'SPOR',
+  'EM|electronic-media-mass-communication-sports-media':       'SPOR',
+  'MC|journalism-mass-communication-sports-media':             'SPOR',
+  'PR|public-relations-mass-communication-sports-media':       'SPOR',
+  // Manufacturing Engineering concentrations
+  'MFGE|manufacturing-engineering-smart':                      'SMAN',
+  // Management concentrations
+  'MGT|management-human-resource':                             'HRM',
+  // Marketing concentrations
+  'MKT|marketing-professional-sales':                          'SALE',
+  'MKT|marketing-services':                                    'SERV',
+};
+
 // ─── Auth ─────────────────────────────────────────────────────────────────────
 
 function loadAuth() {
@@ -101,6 +147,17 @@ function norm(str) {
   return str.toLowerCase().replace(/[^a-z0-9]/g, '');
 }
 
+// Extract the bare major name from a catalog title, e.g.:
+// "Bachelor of Science (B.S.) Major in Advertising" → "Advertising"
+// "B.S. Major in Marketing (Professional Sales Concentration)" → "Marketing"
+// Decodes HTML entities so &amp; → & before normalizing.
+function titleMajorName(title) {
+  const decoded = (title || '')
+    .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&nbsp;/g, ' ');
+  const m = /Major in ([^(]+)/i.exec(decoded);
+  return m ? m[1].trim() : null;
+}
+
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
 async function main() {
@@ -120,7 +177,9 @@ async function main() {
   await sleep(RATE_MS);
 
   // majorsRaw is an array of { key, description, isVisibleInWhatif }
-  const dwMajors = Array.isArray(majorsRaw) ? majorsRaw : (majorsRaw.data || majorsRaw.majors || []);
+  const dwMajors = Array.isArray(majorsRaw)
+    ? majorsRaw
+    : (majorsRaw._embedded?.majors || majorsRaw.data || majorsRaw.majors || []);
   if (!dwMajors.length) die(`Unexpected majors response shape: ${JSON.stringify(majorsRaw).slice(0, 200)}`);
 
   // Build lookup: normalized description → { key, description }[]
@@ -170,8 +229,34 @@ async function main() {
         majorSlugToDwCode.set(p.majorSlug, null);
       }
     } else {
-      unmatched.push({ slug: p.majorSlug, degree: p.degree, reason: 'no-match' });
-      majorSlugToDwCode.set(p.majorSlug, null);
+      // Second pass: match via the clean major name extracted from the program title.
+      // Catalog slugs often include department context (e.g. "advertising-mass-communication")
+      // that DW omits; the title's "Major in X" phrase is more reliable.
+      const titleName  = titleMajorName(p.title);
+      const titleNorm  = titleName ? norm(titleName) : '';
+      const titleCands = titleNorm ? (byNorm.get(titleNorm) || []) : [];
+
+      if (titleCands.length === 1) {
+        majorSlugToDwCode.set(p.majorSlug, titleCands[0].key);
+      } else if (titleCands.length > 1) {
+        const visible = titleCands.filter(c => c.isVisibleInWhatif);
+        if (visible.length === 1) {
+          majorSlugToDwCode.set(p.majorSlug, visible[0].key);
+        } else {
+          unmatched.push({ slug: p.majorSlug, degree: p.degree, reason: 'ambiguous', candidates: titleCands.map(c => c.key) });
+          majorSlugToDwCode.set(p.majorSlug, null);
+        }
+      } else {
+        // Third pass: manual override table.
+        const overrideKey = `${p.majorSlug}|${p.degree}`;
+        const overrideCode = MAJOR_OVERRIDES[overrideKey];
+        if (overrideCode) {
+          majorSlugToDwCode.set(p.majorSlug, overrideCode);
+        } else {
+          unmatched.push({ slug: p.majorSlug, degree: p.degree, reason: 'no-match' });
+          majorSlugToDwCode.set(p.majorSlug, null);
+        }
+      }
     }
   }
 
@@ -184,7 +269,8 @@ async function main() {
   );
 
   // concSlug → dwConcCode, keyed by "dwMajorCode|concSlug"
-  const concMap = new Map();
+  // Pre-seed with manual overrides so they don't appear in the unmatched report.
+  const concMap = new Map(Object.entries(CONC_OVERRIDES));
 
   let concIdx = 0;
   for (const dwCode of majorsNeedingConcs) {
@@ -198,7 +284,9 @@ async function main() {
         `/api/validations/special-entities/concentrations?major=${encodeURIComponent(dwCode)}`
       );
       if (status === 200) {
-        concs = Array.isArray(data) ? data : (data.data || data.concentrations || []);
+        concs = Array.isArray(data)
+          ? data
+          : (data._embedded?.concentrations || data.data || data.concentrations || []);
       } else {
         process.stderr.write(`  HTTP ${status} — skipping concentrations for ${dwCode}\n`);
       }
@@ -239,7 +327,7 @@ async function main() {
         const full = norm(concSlug);
         if (concByNorm.has(full)) {
           concMap.set(mapKey, concByNorm.get(full));
-        } else {
+        } else if (!concMap.has(mapKey)) {
           unmatched.push({ slug: concSlug, major: dwCode, reason: 'conc-no-match',
             available: [...concByNorm.entries()].map(([k,v]) => `${v}(${k})`) });
           concMap.set(mapKey, null);

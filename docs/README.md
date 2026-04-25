@@ -45,6 +45,7 @@ in chat.
 | `[plans/advising-flow.md](plans/advising-flow.md)`                     | Phases 4a / 4b / 5 product shape (advisor brief, multi-term planner).                             |
 | `[plans/rule-shape-discovery.md](plans/rule-shape-discovery.md)`       | Phase 1.6 — how to get ~800 what-if audits for rule-shape inventory (S0–S6 plan).                 |
 | `[plans/whatif-endpoint.md](plans/whatif-endpoint.md)`                 | DW What-If endpoint reverse-engineering notes (T3 / S2). Gate doc for pull-audits.js driver (S3). |
+| `[plans/rule-shape-inventory.md](plans/rule-shape-inventory.md)`       | T5 / S4 output — counts of every requirementType, ruleType, qualifier, exception across all fixtures. Regen: `node scripts/shape/extract-shapes.js`. |
 
 
 ---
