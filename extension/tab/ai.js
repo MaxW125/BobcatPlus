@@ -21,6 +21,10 @@ import {
 import { handleUserTurn } from "../scheduler/index.js";
 import { buildStudentProfile, mergeCalendarBlocks } from "../scheduler/profile.js";
 import { runAnalysisAndWait } from "./eligibleList.js";
+import {
+  persistAvoidDaysForTerm,
+  persistCalendarBlocksForTerm,
+} from "./termPrefs.js";
 
 // Local rejected-candidates memory so chip clicks can skip the LLM round-trip.
 const lastRejectedCandidates = new Map();
@@ -93,37 +97,37 @@ $("aiClearAllBtn")?.addEventListener("click", () => {
 
 // ── calendar blocks + avoid days mutators ────────────────
 
-export function applyNewCalendarBlocks(incoming) {
+export async function applyNewCalendarBlocks(incoming) {
   if (!incoming || !incoming.length) return;
   State.setCalendarBlocks(mergeCalendarBlocks(State.calendarBlocks, incoming));
-  chrome.storage.local.set({ calendarBlocks: State.calendarBlocks });
+  await persistCalendarBlocksForTerm(State.currentTerm, State.calendarBlocks);
   if (State.studentProfile) State.studentProfile.calendarBlocks = State.calendarBlocks;
   renderCalendarFromWorkingCourses();
 }
 
-export function removeCalendarBlock(label) {
+export async function removeCalendarBlock(label) {
   State.setCalendarBlocks(
     State.calendarBlocks.filter(
       (b) => b.label.toLowerCase() !== (label || "").toLowerCase(),
     ),
   );
-  chrome.storage.local.set({ calendarBlocks: State.calendarBlocks });
+  await persistCalendarBlocksForTerm(State.currentTerm, State.calendarBlocks);
   if (State.studentProfile) State.studentProfile.calendarBlocks = State.calendarBlocks;
   renderCalendarFromWorkingCourses();
 }
 
-export function applyNewAvoidDay(day) {
+export async function applyNewAvoidDay(day) {
   if (!day || State.avoidDays.includes(day)) return;
   State.setAvoidDays([...State.avoidDays, day]);
-  chrome.storage.local.set({ avoidDays: State.avoidDays });
+  await persistAvoidDaysForTerm(State.currentTerm, State.avoidDays);
   if (State.studentProfile) State.studentProfile.avoidDays = State.avoidDays;
   renderCalendarFromWorkingCourses();
 }
 
-export function removeAvoidDay(day) {
+export async function removeAvoidDay(day) {
   if (!day || !State.avoidDays.includes(day)) return;
   State.setAvoidDays(State.avoidDays.filter((d) => d !== day));
-  chrome.storage.local.set({ avoidDays: State.avoidDays });
+  await persistAvoidDaysForTerm(State.currentTerm, State.avoidDays);
   if (State.studentProfile) State.studentProfile.avoidDays = State.avoidDays;
   renderCalendarFromWorkingCourses();
 }
@@ -328,7 +332,7 @@ function createThinkingPanel() {
 
 // ── action dispatcher ────────────────────────────────────
 
-export function applyAction(action) {
+export async function applyAction(action) {
   switch (action.type) {
     case "show_message": {
       if (action.text?.trim()) addMessage("ai", action.text.trim());
@@ -360,26 +364,26 @@ export function applyAction(action) {
       return "[Also considered: " + list + "]";
     }
     case "add_calendar_block": {
-      applyNewCalendarBlocks([action.block]);
+      await applyNewCalendarBlocks([action.block]);
       const b = action.block;
       addMessage("system",
         "Calendar block saved: " + b.label + " " + (b.days || []).join("/") + " " + b.start + "–" + b.end);
       return "[Added block " + b.label + "]";
     }
     case "add_avoid_day": {
-      applyNewAvoidDay(action.day);
+      await applyNewAvoidDay(action.day);
       addMessage("system", "Marked " + action.day + " as a day to keep class-free.");
       return "[Marked " + action.day + " as avoid day]";
     }
     case "remove_avoid_day": {
-      removeAvoidDay(action.day);
+      await removeAvoidDay(action.day);
       addMessage("system", "Cleared " + action.day + " — classes allowed again.");
       return "[Cleared avoid day " + action.day + "]";
     }
     case "reset_avoid_days": {
       const prior = State.avoidDays.slice();
       State.setAvoidDays([]);
-      chrome.storage.local.set({ avoidDays: State.avoidDays });
+      await persistAvoidDaysForTerm(State.currentTerm, State.avoidDays);
       if (State.studentProfile) State.studentProfile.avoidDays = State.avoidDays;
       renderCalendarFromWorkingCourses();
       if (prior.length) addMessage("system", "Reset kept-clear days (was " + prior.join(", ") + ").");
@@ -681,7 +685,7 @@ async function sendChat() {
     const assistantParts = [];
     for (const action of actions) {
       if (stale()) return;
-      const summary = applyAction(action);
+      const summary = await applyAction(action);
       if (summary) assistantParts.push(summary);
     }
     if (assistantParts.length) {
