@@ -33,16 +33,22 @@ wins.
 | [`decisions-archive.md`](decisions-archive.md) | Older ADRs (D2–D14). Read only when you need history. |
 | [`CONTRIBUTING.md`](CONTRIBUTING.md) | How to add docs. New markdown must be indexed here or in `CLAUDE.md`. |
 
-## Phase plans
+## Plans (RFCs)
 
-| Phase | Theme | Plan |
-| --- | --- | --- |
-| 1.5 | Graph-native solver — many-to-many, ChooseN/AllOf | [`plans/requirement-graph.md`](plans/requirement-graph.md) |
-| 4 | Advising flow | [`plans/advising-flow.md`](plans/advising-flow.md) |
+Tracks live in [`../compass.md`](../compass.md). Each plan below is the
+detailed RFC for one track — read the plan when you're working in that
+area, the compass for the bird's-eye view.
 
-Phases 5 (graduation tracker) and 6+ (tree-style requirement
-visualization) are tracked in [`../compass.md`](../compass.md) and Jira;
-no plan doc yet.
+| Track | Plan |
+| --- | --- |
+| Graduation Tracker MVP — header strip, ships independent | [`plans/grad-tracker.md`](plans/grad-tracker.md) |
+| Course Catalog (L2) — bundled prereq DAG + seasonality + refresh | [`plans/course-catalog.md`](plans/course-catalog.md) |
+| Graph-aware Scheduler — solver consumes Catalog, ChooseN, many-to-many UX | [`plans/requirement-graph.md`](plans/requirement-graph.md) |
+| Forward Planner — multi-semester, pace slider, drag-and-replan deferred | [`plans/forward-planner.md`](plans/forward-planner.md) |
+| Advising flow — pre-advising questions + advisor brief | [`plans/advising-flow.md`](plans/advising-flow.md) |
+
+Tree-style requirement visualization is speculative; tracked in compass
+and Jira, no plan doc yet.
 
 ## Open bug diagnoses ([`bugs/`](bugs/))
 

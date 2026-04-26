@@ -1,12 +1,27 @@
-# RequirementGraph — design note (Phase 1 + 1.5 open questions)
+# RequirementGraph — design note
 
-**Status:** ✅ **Phase 1 shipped** (`0cbceb6`, D2 / D17). The parser lives in
-`extension/requirements/{graph,txstFromAudit,wildcardExpansion}.js`; `deriveEligible`
-produces the legacy flat shape for the current solver. **Phase 1.5 (graph-native
-solver, ChooseN + many-to-many) remains open** — the design sections below and the
-"Open design questions" list are the working notes for that phase. Everything
-marked *pre-ship* below is preserved as historical rationale; anywhere this doc
-contradicts live code, code wins and this doc must be updated.
+**Status:** ✅ **Parser shipped** (`0cbceb6`, D2 / D17). The parser lives in
+`extension/requirements/{graph,txstFromAudit,wildcardExpansion}.js`;
+`deriveEligible` produces the legacy flat shape for the current solver.
+**Graph-aware Scheduler track (formerly "Phase 1.5") remains open** —
+design sections below and the "Open design questions" list are the
+working notes for that track.
+
+Position in the layered model (D27, 2026-04-25):
+
+- **L0** This file — RequirementGraph parser. ✅ shipped.
+- **L1** Per-leaf `applied[]` overlay. ✅ shipped (inside the parser output).
+- **L2** Course Catalog — prereq DAG, seasonality, programs, co-reqs.
+  See [`course-catalog.md`](course-catalog.md). ⬜ open.
+- **L3** Single-term solver — consumes L0+L1+L2. The "Graph-aware
+  Scheduler" track is the work to teach the existing solver to consume
+  the catalog and to reason about ChooseN / many-to-many natively.
+- **L4-L5** Forward Planner — multi-semester planning over L0-L3.
+  See [`forward-planner.md`](forward-planner.md). ⬜ open.
+
+Anything below marked *pre-ship* is preserved as historical rationale;
+anywhere this doc contradicts live code, code wins and this doc must be
+updated.
 
 Scope: **Texas State University** DegreeWorks audits only (D3). No adapter interface
 until university #2 ships.

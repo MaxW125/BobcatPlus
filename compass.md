@@ -18,26 +18,53 @@ runs end-to-end on real DegreeWorks audits with the v3 hybrid pipeline:
 deterministic CSP solver framed by LLM intent / affinity / rationale
 stages.
 
-We are four people. Ship small, ship often.
+The next big push is **multi-semester awareness**: a real model of a
+student's path to graduation, not just one term at a time. Plan docs
+landed 2026-04-25 — see *Tracks* below.
 
-## Phase + theme
+We are four people. Ship small, ship often. Target ship window for the
+multi-semester surface: late summer / early fall 2026.
 
-| Phase | Theme | Status |
-| ----- | ----- | ------ |
-| 1.5 | Graph-native solver — `RequirementGraph` + many-to-many UX | ⬜ next ([SCRUM-35](https://aidanavickers.atlassian.net/browse/SCRUM-35), branch `rule-shape-discovery`) |
-| 2   | Scorer fidelity | ⬜ |
-| 2.5 | Prereq-in-term in solver | ⬜ |
-| 3   | Archetype-seeded ranking | ⬜ |
-| 4   | Advising flow | ⬜ ([`docs/plans/advising-flow.md`](docs/plans/advising-flow.md)) |
-| 5   | Graduation tracker | ⬜ |
-| 6+  | Tree-style requirement visualization | ⬜ |
+## Tracks
 
-## Open architectural question
+Replaces the old `Phase 1.5 / 2 / 2.5 / …` numbering. Same work, named
+clearly. Track buckets are coarse — order within a bucket is flexible.
 
-**Is the AI front door or ambient?** I.e. does a student land in a chat
-that drives the schedule, or do they land in the schedule with the AI
-available on the side? Both have been prototyped in conversation; we
-haven't picked. Discuss before Phase 4 work starts.
+| Track | Theme | Status | Plan |
+| --- | --- | --- | --- |
+| **Now** | Graduation Tracker MVP — header strip, pure function | ⬜ ships independent | [`docs/plans/grad-tracker.md`](docs/plans/grad-tracker.md) |
+| **Now** | Prereq schema sweep — 15 `courseInformation` fixtures | ⬜ unblocks Catalog | — |
+| **Foundation** | Course Catalog (L2) — bundled prereq DAG + seasonality + refresh | ⬜ unblocks everything below | [`docs/plans/course-catalog.md`](docs/plans/course-catalog.md) |
+| **Foundation** | Graph-aware Scheduler — solver consumes Catalog + ChooseN + many-to-many UX | ⬜ ([SCRUM-35](https://aidanavickers.atlassian.net/browse/SCRUM-35); branch `rule-shape-discovery` is the precursor — [PR #12](https://github.com/BobcatPlus/BobcatPlus/pull/12)) | [`docs/plans/requirement-graph.md`](docs/plans/requirement-graph.md) |
+| **Foundation** | Build Schedule button — non-AI path on build view | ⬜ small parallel ship | [`docs/plans/forward-planner.md`](docs/plans/forward-planner.md) §12 |
+| **Multi-semester** | Forward Planner v1 — pace slider + read-only plan | ⬜ depends on Catalog + Graph-aware | [`docs/plans/forward-planner.md`](docs/plans/forward-planner.md) |
+| **Multi-semester** | Per-term overrides (v1.5) — slate-level credit cap, skip terms | ⬜ extends v1 | [`docs/plans/forward-planner.md`](docs/plans/forward-planner.md) §5 |
+| **Later** | Advising flow — pre-advising questions, advisor brief | ⬜ | [`docs/plans/advising-flow.md`](docs/plans/advising-flow.md) |
+| **Later** | Scorer fidelity / schedule variety — `penaltyEffectiveness === 1`, archetype-seeded ranking | ⬜ post-Catalog | — |
+| **Later** | Drag-and-replan (v2) — pin a course, watch cascade | ⬜ deferred until v1.5 user signal | [`docs/plans/forward-planner.md`](docs/plans/forward-planner.md) §6 |
+| **Speculative** | Tree-style requirement visualization | ⬜ | — |
+| **Speculative** | Catalog-year switching, "what-if I changed major" | ⬜ post-advising-flow | [`docs/plans/forward-planner.md`](docs/plans/forward-planner.md) §11 |
+
+The schedule-builder LLM (intent → affinity → rationale) stays in the
+codebase and shipped product. It is no longer the *primary* push — the
+priority is multi-semester awareness on a deterministic foundation, with
+AI as additive surfaces (ambient, not front-door — see *Resolved
+question* below).
+
+## Resolved question
+
+**AI placement: ambient, not front-door.** Confirmed 2026-04-25. The
+deterministic surfaces (eligible list, Build Schedule button, Forward
+Planner) are primary. AI is additive — pre-advising flow, advisor brief,
+"ask about your degree" — and gates on the deterministic baseline being
+trustworthy. See `docs/decisions.md` D27.
+
+## Open question
+
+**Catalog manifest hosting.** Where does the Course Catalog refresh
+manifest live (GitHub raw URL, Cloudflare Pages, dedicated CDN)? Cheap
+to revisit; see [`docs/plans/course-catalog.md`](docs/plans/course-catalog.md)
+§5 + §11.
 
 ## Active sprint + tracker
 

@@ -51,14 +51,15 @@ that more info = better schedule + better appointment.
 
 ## 3. Brief contents (what the advisor sees)
 
-Synthesized by a `callAdvisorBrief` LLM call (to be added in Phase 4b) that
-takes as input:
+Synthesized by a `callAdvisorBrief` LLM call (added when this Advising
+flow track ships) that takes as input:
 
 - Requirement graph for the student's program.
 - Completed/in-progress courses.
 - Current semester's generated schedule + honored/unmet preferences.
 - Student's five answers above.
-- Multi-semester path plan (from Phase 5, when available).
+- Multi-semester path plan (from the Forward Planner, when available —
+  see [`forward-planner.md`](forward-planner.md)).
 
 Output sections:
 
@@ -75,41 +76,48 @@ Output sections:
 
 ## 4. Reality check — what's realistic when
 
+Track names match the current `compass.md` *Tracks* table (D27 retired
+the old `Phase 1.5 / 2.5 / 4 / 5` numbering).
 
-| Capability                                                       | Blocked on                                                                 | Realistic timeline    |
-| ---------------------------------------------------------------- | -------------------------------------------------------------------------- | --------------------- |
-| 5-question conversational flow + progress bar                    | UI work; LLM call with existing intent schema                              | 2–3 wks after P1.5    |
-| Pre-populated schedule from answers                              | Existing scheduler, plus Q2 seeding calendar blocks                        | Same as above         |
-| Advisor brief draft (sections 1–4)                               | Phases 2.5 + 4b                                                            | Post Phase 2.5        |
-| "Prereq risk" flagging in the brief                              | Phase 2.5 (prereq awareness)                                               | Phase 2.5             |
-| "How many semesters at 12/15 cr?" computation                    | Phase 5 (multi-semester planner) + seasonality data                        | Phase 5               |
-| BA vs BS comparison                                              | Run the parser on both audits; diff the graphs. Narrative = RAG (Phase 4b) | Phase 4b              |
-| "You MUST take Calc 1 this term or you'll miss graduation" alert | Phase 5 forward-scheduling with prereq chains                              | Phase 5               |
-| Advisor login + portal                                           | Non-AI product/infra work (auth, roles, student-advisor mapping)           | Unscoped in this plan |
-| Appointment booking integration                                  | Likely institution-specific (TXST uses Navigate/EAB?)                      | Post-MVP              |
+| Capability | Blocked on | Realistic timing |
+| --- | --- | --- |
+| 5-question conversational flow + progress bar | UI work; LLM call with existing intent schema | After Graph-aware Scheduler |
+| Pre-populated schedule from answers | Existing scheduler + Q2 seeding calendar blocks | Same as above |
+| Advisor brief draft (sections 1–4) | Course Catalog (prereq awareness) + advisor LLM call | After Catalog ships |
+| "Prereq risk" flagging in the brief | Course Catalog (prereq DAG) | After Catalog ships |
+| "How many semesters at 12/15 cr?" computation | Forward Planner v1 + seasonality | After Forward Planner |
+| BA vs BS comparison | What-If audit fetcher; diff two graphs; LLM RAG narrative | After Forward Planner (catalog-year switching path, [`forward-planner.md`](forward-planner.md) §11) |
+| "You MUST take Calc 1 this term or you'll miss graduation" alert | Forward Planner with prereq chains + seasonality | Forward Planner v1 |
+| Advisor login + portal | Non-AI product/infra work (auth, roles, student-advisor mapping) | Unscoped in this plan |
+| Appointment booking integration | Likely institution-specific (TXST uses Navigate/EAB?) | Post-MVP |
 
 
 ## 5. Data gaps we must acknowledge
 
-- **Course seasonality** (fall/spring/both/summer). Not in Banner per-term
-responses cleanly. Options: scrape 4–6 terms of history and infer; ask
-TXST for the official pattern; fall back to "offered this term =>
-assume offered every same-season term". Decision deferred to Phase 5
-kickoff.
-- **Prereq strings**. DW `courseInformation` returns a `prerequisites` field
-whose shape we haven't fully inspected yet. First action in Phase 2.5:
-gather fixtures for 10–15 prereq strings across MATH/CS/ENG and confirm
-whether they're machine-parseable or whether we need a prereq-parser
-(another parser, another set of tests).
-- **Co-requisites** (e.g. chem lecture + chem lab). Partially inferred
-today from the "missing lab" bug. DW should carry co-req in the rule
-text; needs a fixture sweep.
+These are now substantially addressed by the Course Catalog (L2) plan
+([`course-catalog.md`](course-catalog.md)) — the gap notes below are
+preserved for historical context, with pointers to where each is
+resolved.
+
+- **Course seasonality** (fall/spring/both/summer). Resolved by
+[`course-catalog.md`](course-catalog.md) §4 (empirical aggregation
+from cached subject searches; confidence-tiered, disclaimer-heavy in
+the UI).
+- **Prereq strings**. Resolved by [`course-catalog.md`](course-catalog.md)
+§6 (prereq-DAG migration off Banner-HTML regex onto DW
+`courseInformation.prerequisites`); gated on a fixture sweep
+(`tests/fixtures/courseInformation/`, ~15 courses across MATH/CS/ENG/
+BIO/MUS/BUS) which is the first concrete deliverable in that plan.
+- **Co-requisites** (e.g. chem lecture + chem lab). Resolved by
+[`course-catalog.md`](course-catalog.md) §7 (`CourseFact.coRequisites`
+modeled explicitly; replaces the hand-curated `pairedCourse` field in
+the solver).
 - **Program-specific rules that aren't in the audit JSON.** E.g. "honors
 students must take honors section of ENG 1310". This is the class of
 things we will *never* get perfect from parsing; the advisor brief is
 where these get surfaced via stressor-question routing.
 
-## 6. What we will NOT build in Phase 4
+## 6. What we will NOT build in this track
 
 - Two-way calendar sync with Google / Apple calendars (the "Add to
 Calendar" button is enough for MVP).

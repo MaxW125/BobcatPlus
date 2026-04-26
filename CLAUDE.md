@@ -106,7 +106,8 @@ Keep it ≤8 lines. Receipt for the next contributor, not a report.
 
 - `main` — stable; ships to the Chrome Web Store.
 - `Demo` — external demos.
-- `rule-shape-discovery` — Phase 1.5 graph-native solver work ([PR #12](https://github.com/BobcatPlus/BobcatPlus/pull/12)).
+- `rule-shape-discovery` — graph-native solver groundwork ([PR #12](https://github.com/BobcatPlus/BobcatPlus/pull/12)); precursor to the *Graph-aware Scheduler* track in [`compass.md`](compass.md).
+- `path-to-graduation` — RFC docs for the multi-semester planning push ([`docs/plans/forward-planner.md`](docs/plans/forward-planner.md), [`docs/plans/course-catalog.md`](docs/plans/course-catalog.md), [`docs/plans/grad-tracker.md`](docs/plans/grad-tracker.md)).
 
 Milestones merge via PR. Prefer `git revert` for rollback (D17); feature flags
 only when a phase needs shadow mode, then remove.

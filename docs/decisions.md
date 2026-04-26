@@ -18,6 +18,115 @@ wins and the plan must be updated.
 
 ---
 
+## 2026-04-25 — D27: Path-to-graduation strategy — layered foundation, ambient AI
+
+**Context.** April 2026, ~4 months until the late-summer/early-fall ship
+window. Strategic question on the table: how do we model and implement a
+student's path to graduation, including multi-semester planning,
+prereq-aware eligibility, seasonality awareness, and (eventually)
+features like proactive minor suggestions? Two related sub-questions:
+(a) is AI the front door or ambient? (b) do we sequence the work
+phase-by-phase or build a shared data layer first?
+
+Three plan docs landed in the same commit
+(`docs/plans/forward-planner.md`, `docs/plans/course-catalog.md`,
+`docs/plans/grad-tracker.md`) framing the work as a **layered model**
+rather than sequential phases:
+
+- **L0** RequirementGraph (shipped).
+- **L1** Per-leaf `applied[]` overlay (shipped).
+- **L2** *Course Catalog* — bundled prereq DAG + seasonality + program
+  snapshots + co-reqs. Currently missing.
+- **L3** Single-term solver (shipped, the existing `scheduler/solver/*`).
+- **L4** Plan as a sequence of TermSlate objects.
+- **L5** Forward Planner — heuristic search over L4.
+
+**Decision.**
+
+1. **Build L2 Course Catalog as the foundation, not as Phase 2.5
+   work-after-Phase-1.5.** The graph-aware scheduler (formerly
+   "Phase 1.5") is rescoped to consume the catalog. The prereq-DAG
+   migration (formerly "Phase 2.5") collapses into the catalog work.
+   The forward planner (formerly "Phase 5") becomes a natural extension
+   of the L4 plan structure rather than a from-scratch new system.
+
+2. **Ship the Graduation Tracker MVP in parallel and independently.**
+   It uses only L0+L1, demonstrates visible value within ~1 week,
+   becomes the placeholder UI surface that the Forward Planner header
+   replaces later. See `docs/plans/grad-tracker.md`.
+
+3. **Bundle the Course Catalog with the extension.** ~6-8 MB of
+   prereqs, facts, seasonality, top-20-program snapshots ship in the
+   bundle. Manifest + delta refresh keeps it current. Bundled cold-
+   start is the architectural payoff: instant eligible list on first
+   load, planner runs without network in its hot loop. Banner stays
+   the source of truth at registration time;
+   `extension/bg/prereqs.js` per-CRN check stays as runtime tripwire.
+
+4. **AI placement: ambient, not front-door** (Direction C from the
+   prior planning conversation). Deterministic surfaces are primary —
+   eligible list, build-view "Build Schedule" button, Forward Planner.
+   AI is additive: pre-advising flow, advisor brief, "ask about your
+   degree." The schedule-builder LLM (`scheduler/llm/intent.js`,
+   `affinity.js`, `rationale.js`) stays in the codebase and shipped
+   product; it is no longer the *primary* push.
+
+5. **Phase-numbering retired.** `compass.md` `Phase 1.5 / 2 / 2.5 / …`
+   table replaced with named tracks (Now / Foundation /
+   Multi-semester / Later / Speculative). Same work, clearer naming.
+
+**Rationale.** The phase sequencing in compass.md (1.5 → 2 → 2.5 → 3 →
+4 → 5) implied each phase rebuilds on the prior, including rebuilding
+the solver multiple times as data shapes evolved. The layered approach
+front-loads ~2-3 weeks of catalog work and **deletes the rebuilds** —
+the solver consumes the catalog once, the planner is a superset of the
+solver, and the prereq-aware behavior is baked into the catalog rather
+than added later. Total estimated effort over the cycle: comparable.
+Architectural debt: lower.
+
+The ambient-AI direction was already the leaning per
+`~/.cursor/plans/bobcat-paths-forward.md` Direction C; this entry
+formally records it. The "AI front door vs ambient" open question in
+`compass.md` is closed.
+
+**Reversible by.** `git revert` of the path-to-graduation branch
+merge. The plans are docs only — no code rolled out under D27 yet.
+The decision stands until the catalog work ships and either validates
+or invalidates the layered framing.
+
+**Postmortem-in-advance.** *Six months from now we rolled this back.
+What happened?*
+
+1. **Failure mode:** Catalog bundling proves more fragile than
+   anticipated — schema drift in `courseInformation` happens monthly
+   instead of yearly, and the manual rebuild cadence can't keep up.
+   Trust degrades. **Mitigation:** Each plan doc has an explicit
+   postmortem-in-advance and tripwires for catalog/Banner divergence;
+   if drift rate exceeds threshold, the runtime per-CRN check
+   (`bg/prereqs.js`) is the safety net by design. We can also degrade
+   to "fetch on demand" mode without rolling back the architecture.
+
+2. **Failure mode:** Heuristic planner's optimum is meaningfully
+   worse than CSP optimum on real audits, planner gives bad estimates,
+   trust hit. **Mitigation:** Validation harness against 5+ real
+   student plans gates the planner's first ship.
+
+3. **Failure mode:** Top-20-major bundling list misses common
+   programs, more students hit cold-load fetches than expected, first-
+   open UX degrades. **Mitigation:** Telemetry from cold-load events
+   informs which programs to add; the bundle is updateable per
+   release.
+
+**Landed.** `path-to-graduation` branch, 2026-04-25. Docs only;
+implementation tracked under [SCRUM-35](https://aidanavickers.atlassian.net/browse/SCRUM-35)
++ subtasks to be filed against the new plans.
+
+**See also.** `docs/plans/forward-planner.md`,
+`docs/plans/course-catalog.md`, `docs/plans/grad-tracker.md`,
+`compass.md` *Tracks* table.
+
+---
+
 ## 2026-04-25 — D26: Repo + docs cleanup; `process.md` deleted, ADRs split into `decisions-archive.md`
 
 **Context.** Four-person team, lots of accumulated solo-author docs. `process.md`
