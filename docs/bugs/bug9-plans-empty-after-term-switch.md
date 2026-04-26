@@ -14,7 +14,7 @@ User switches the term in the full tab. The Banner Plan list sometimes appears
 
 ## Hypothesis (engineering)
 
-`main`’s boot / term pipeline runs **`loadSchedule` then `loadBannerPlans`**.
+`main`’s boot / term pipeline runs `**loadSchedule` then `loadBannerPlans`**.
 `loadSchedule` can touch `registrationHistory/reset` and other class-registration
 handshake state that **shares the Banner SSB session** with Plan CRUD. If the
 Plan session or synchronizer token is reset **after** plan fetch was expected,
@@ -31,16 +31,16 @@ Banner modes.
 ## What *not* to do
 
 - Do not "fix" by duplicating fetches without understanding `withSessionLock`
-  and `openLoginPopup`’s SSB handshakes.
+and `openLoginPopup`’s SSB handshakes.
 - Do not add silent retries that mask 403 HTML pages from Banner.
 
 ## Verification (when someone picks this up)
 
-1. Fresh extension load; log in; open full tab.  
-2. Note plan count for term A; switch to term B and back to A.  
-3. Compare plan list to TXST SSB in-browser for the same terms.  
+1. Fresh extension load; log in; open full tab.
+2. Note plan count for term A; switch to term B and back to A.
+3. Compare plan list to TXST SSB in-browser for the same terms.
 4. Capture whether `getAllBannerPlans` / `getBannerPlanItems` return `[]` while
-   `getRegistrationEvents` is non-empty.
+  `getRegistrationEvents` is non-empty.
 
 ## Links
 

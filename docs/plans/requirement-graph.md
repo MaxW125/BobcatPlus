@@ -268,9 +268,16 @@ sibling courses at a time".
   and `creditsBegin` are present, does "OR" mean either threshold satisfies? Working
    assumption: yes, OR → min(classes, credits-equivalent) counts. Confirm via the
    CS BS audit where engineering-style credit-hour rules are common.
-3. `**ifElsePart: "IfPart" | "ElsePart"*`* — conditional rule branches. Rare in this
-  audit. Likely tied to transfer credit / test credit / catalog-year switches. Need a
-   second audit to see a real example before designing.
+3. `**ifElsePart: "IfPart" | "ElsePart"`** — conditional rule branches. **Resolved
+  empirically:** the rule-shape inventory (2026-04-25, 83 audits) reports 1615
+   `ifElsePart` occurrences across 100% of audits — it is the most pervasive
+   structural feature in DW output, not a rare edge case. Current
+   `convertIfStmt` keeps `IfPart` and silently drops `ElsePart`, which is a
+   latent correctness bug because what-if audits never mark `ElsePart` as
+   satisfied (fresh-student simulation), but real audits will once a transfer-
+   credit / AP-CLEP / waiver fires the else branch. Phase 1.5 must replace the
+   shortcut with an `IfStmtNode` / `IfPartNode` / `ElsePartNode` triad. Tracked
+   in `docs/plans/rule-shape-discovery.md` §9 step 1.
 4. **Attribute resolution without catalog attributes.** If the concrete fallback courses
   listed under `@@ with ATTRIBUTE=xxx` prove insufficient in testing, we need a Banner
    endpoint that surfaces section attributes. Investigation task, not blocking Phase 1.

@@ -29,18 +29,18 @@ on **any** falsy response without passing through the error object from
 ## Scope of fix (expected)
 
 - Thread an optional `authError: string` (or reuse an existing field) from
-  `checkAuth` through the boot sequence and term-change handler.  
+`checkAuth` through the boot sequence and term-change handler.  
 - Map known HTTP statuses / body shapes to a **short, student-safe** string
-  (no raw HTML).  
+(no raw HTML).  
 - Ensure the "logged in" fast path does not clobber a pending error for ~1 tick
-  (if a race is confirmed in repro).
+(if a race is confirmed in repro).
 
 ## Verification
 
 1. Force a DW 401 (clear DW cookie only, or revoke session server-side if
-   available) while keeping Banner warm — or the converse.  
+  available) while keeping Banner warm — or the converse.
 2. Confirm the status bar shows **which** side failed, matching
-   `checkAuth`’s logic.  
+  `checkAuth`’s logic.
 3. After successful `loginSuccess`, confirm the error clears.
 
 ## Links

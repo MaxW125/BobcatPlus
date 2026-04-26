@@ -46,6 +46,7 @@
     if (rt === "DEGREE" || title.startsWith("degree in ")) return BLOCK_TYPE.DEGREE;
     if (rt === "MAJOR" || title.startsWith("major in "))   return BLOCK_TYPE.MAJOR;
     if (rt === "MINOR" || title.startsWith("minor in "))   return BLOCK_TYPE.MINOR;
+    if (rt === "CONC"  || title.startsWith("conc in "))    return BLOCK_TYPE.CONC;
     if (/core/i.test(title) || /CORE/.test(rv))            return BLOCK_TYPE.CORE;
     return BLOCK_TYPE.OTHER;
   }

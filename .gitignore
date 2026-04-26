@@ -1,1 +1,15 @@
 /.claude/worktrees
+.DS_Store
+.cursor/
+
+# DW What-If bulk audit dump (S3) — S5 uses git add -f for curated fixtures
+/tests/fixtures/audits/whatif/
+
+# Cookie jar — never commit
+.bobcatplus-dw-cookie
+
+# Catalog manifest (bulk) — not committed; regenerate via scrape-majors.js
+/scripts/catalog/degree-combinations.json
+
+# What-If run log
+/scripts/whatif/run.log
