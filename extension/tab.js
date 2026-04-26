@@ -13,6 +13,7 @@ import * as State from "./tab/state.js";
 import { $ } from "./tab/state.js";
 import {
   applyStudentInfoToUI,
+  refreshDegreeAuditOverview,
   updateOverviewFromEvents,
   setPanelMode,
 } from "./tab/overview.js";
@@ -142,6 +143,10 @@ import "./tab/chat.js";
       const ok = await checkAuth();
       if (gen !== State.getTermChangeGeneration()) return;
       if (ok) {
+        // Header may have been set to "Not logged in" from the eager boot
+        // fetch; after checkAuth the DegreeWorks session is known-good — refresh.
+        await refreshDegreeAuditOverview();
+        if (gen !== State.getTermChangeGeneration()) return;
         await loadSchedule(State.currentTerm);
         if (gen !== State.getTermChangeGeneration()) return;
         // Banner session is warm after loadSchedule, so plans fetch cheaply.
@@ -199,6 +204,8 @@ $("termSelect").addEventListener("change", async (e) => {
   const ok = await checkAuth();
   if (gen !== State.getTermChangeGeneration()) return;
   if (ok) {
+    await refreshDegreeAuditOverview();
+    if (gen !== State.getTermChangeGeneration()) return;
     await loadSchedule(State.currentTerm);
     if (gen !== State.getTermChangeGeneration()) return;
     await loadBannerPlans(State.currentTerm);

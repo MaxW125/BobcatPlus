@@ -71,9 +71,18 @@ export function refreshDegreeAuditOverview() {
         State.setDegreeAuditSnapshot(data);
         State.setCurrentStudent(data);
         applyStudentInfoToUI(data);
+        renderOverviewPanel();
+        resolve();
+        return;
       }
-      renderOverviewPanel();
-      resolve();
+      chrome.runtime.sendMessage({ action: "getStudentInfo" }, (student) => {
+        if (student) {
+          State.setDegreeAuditSnapshot(null);
+          applyStudentInfoToUI(student);
+        }
+        renderOverviewPanel();
+        resolve();
+      });
     });
   });
 }
