@@ -715,6 +715,5 @@ for runtime): `[extension/bg/prereqs.js](../../extension/bg/prereqs.js)`.
 `[../decisions.md](../decisions.md)` D20.
 - Bundled JSON cache strategy precedent: none in repo today.
 - Existing What-If endpoint design:
-`[whatif-endpoint.md](whatif-endpoint.md)` (on
-rule-shape-discovery branch; will land on main with PR #12).
+`[whatif-endpoint.md](whatif-endpoint.md)`.
 
